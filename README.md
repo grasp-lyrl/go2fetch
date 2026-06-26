@@ -1,6 +1,6 @@
 # Go2 Fetch
 
-### Installation
+## Installation
 
 ```bash
 # setup python environment
@@ -16,8 +16,7 @@ python -m pip install --upgrade pip setuptools wheel
 pip install -r requirements.txt
 ```
 
-```markdown
-### Usage Example
+## Usage Example
 
 Find the network interface connected to the Go2:
 
@@ -46,3 +45,21 @@ python -m examples.send_command enp129s0 move 0.0 0.0 0.25 --t 2.0
 
 Replace `enp129s0` with your Go2 network interface.
 
+## Rerun Recording & Visualization
+
+We save recordings in `logs/` by default.
+
+```bash
+# record data
+python ./scripts/record.py enp129s0 --out logs/go2fetch.rrd
+
+# visualize a recorded bag
+rerun logs/go2fetch.rrd
+
+# visualize data live
+python ./scripts/record.py enp129s0 --live
+```
+
+For now either visualize the data live or record them, but not concurrently.
+
+Replace `enp129s0` with your Go2 network interface.

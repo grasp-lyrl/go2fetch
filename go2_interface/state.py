@@ -31,6 +31,5 @@ def state_to_dict(msg):
         "position": list(msg.position),
         "velocity": list(msg.velocity),
         "yaw_speed": float(msg.yaw_speed),
-        "body_height": float(msg.body_height),
     }
     
