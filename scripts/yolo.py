@@ -1,54 +1,84 @@
-#https://rerun.io/docs/getting-started/data-in
-
 from ultralytics import YOLO
-import rerun as rr
+#import rerun as rr
+import cv2
+import numpy as np
 
-model = YOLO("yolov8n.pt") #change later
-stream_path = "" #change later, do i even need?
-CONF = 0.5 #idk change later
+model = YOLO("yolov8n.pt")
+CONF = 0.5
+
+#rr.init("go2fetch_yolo")
+
+recording = cv2.VideoCapture("../data/test_1.mp4")
+
+if not recording.isOpened():
+    print("no recording opened")
+    exit()
+
+fps = recording.get(cv2.CAP_PROP_FPS)
+width = int(recording.get(cv2.CAP_PROP_FRAME_WIDTH))
+height = int(recording.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+output = cv2.VideoWriter("../data/test_1_yolo.mp4", fourcc, fps, (width, height))
+
 all_frames = []
 
-rr.init("go2fetch_yolo")
+def process_frame(frame, index):
+    #rr.set_time_sequence("frame", index)
 
-# *ask how to loard the stream recording 
-recording = None #change later
-
-for index, image in enumerate(recording):
-    rr.set_time_sequence("frame", index)
-
-    results = model(image)
+    results = model(frame, verbose=False)
 
     frame_detections = []
 
     for box in results[0].boxes:
         conf = float(box.conf)
 
-        if conf<CONF:
+        if conf < CONF:
             continue
 
         class_id = int(box.cls)
         class_name = model.names[class_id]
 
-        x1, y1, x2, y2 = box.xyxy[0].tolist()
+        x1, y1, x2, y2 = map(float, box.xyxy[0].tolist())
 
-        detect = {
+        frame_detections.append({
             "class": class_name,
-            "confidence": conf, 
+            "confidence": conf,
             "bbox": [x1, y1, x2, y2]
-        }
+        })
 
-        frame_detections.append(detect)
+    annotated = results[0].plot()
+    annotated = np.asarray(annotated, dtype=np.uint8)
+
+    return annotated, frame_detections
+
+
+index = 0
+
+while recording.isOpened():
+    ret, frame = recording.read()
+    if not ret:
+        break
+
+    annotated_frame, frame_detections = process_frame(frame, index)
 
     all_frames.append({
-        "frame":index,
-        "detections":frame_detections
-        })
+        "frame": index,
+        "detections": frame_detections
+    })
+
+    cv2.imshow("yolo", annotated_frame)
+
+    output.write(annotated_frame)
 
     for d in frame_detections:
         print(f"{d['class']}, {d['confidence']:.2f}")
 
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
 
+    index += 1
 
-
-
-
+recording.release()
+output.release()
+cv2.destroyAllWindows()
