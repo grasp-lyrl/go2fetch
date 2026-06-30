@@ -27,7 +27,11 @@ ip -br link
 Read state:
 
 ```bash
+# read state
 python -m examples.read_state enp129s0
+
+# stream images
+python -m examples.read_camera enp129s0
 ```
 
 Send commands:
