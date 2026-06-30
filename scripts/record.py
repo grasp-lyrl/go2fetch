@@ -8,6 +8,7 @@ import rerun.blueprint as rrb
 
 from go2_interface.lidar import make_lidar_reader, pointcloud_to_xyz
 from go2_interface.state import make_state_reader, state_to_dict
+from go2_interface.video import default_video_path, start_h264_video
 
 
 p = argparse.ArgumentParser()
@@ -16,11 +17,12 @@ p.add_argument("--out", default=None)
 p.add_argument("--live", action="store_true")
 p.add_argument("--stride", type=int, default=1)
 p.add_argument("--lidar-hz", type=float, default=0.0)
+p.add_argument("--video-out", default=None)
 p.add_argument("--window", type=float, default=10.0)
 args = p.parse_args()
 
-if args.live == bool(args.out):
-    raise SystemExit("use exactly one: --live or --out logs/name.rrd")
+if not args.live and not args.out:
+    raise SystemExit("use --live, --out logs/name.rrd, or both")
 
 
 def ts(name, origin):
@@ -37,7 +39,7 @@ def ts(name, origin):
     )
 
 
-blueprint = rrb.Blueprint(rrb.Tabs(
+tabs = [
     rrb.Vertical(
         ts("Position", "/state/position"),
         ts("Velocity", "/state/velocity"),
@@ -51,18 +53,27 @@ blueprint = rrb.Blueprint(rrb.Tabs(
         name="IMU",
     ),
     rrb.Spatial3DView(name="Lidar", origin="/lidar"),
-))
+]
+
+blueprint = rrb.Blueprint(rrb.Tabs(*tabs))
 
 rr.init("go2fetch")
 
-if args.live:
-    rr.spawn()
-
 if args.out:
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
+
+if args.live and args.out:
+    rr.spawn(connect=False)
+    rr.set_sinks(rr.GrpcSink(), rr.FileSink(args.out), default_blueprint=blueprint)
+elif args.live:
+    rr.spawn()
+elif args.out:
     rr.save(args.out)
 
 rr.send_blueprint(blueprint)
+
+video_out = args.video_out or (default_video_path(args.out) if args.out else None)
+video = start_h264_video(args.iface, out=video_out, live=args.live)
 
 read_state = make_state_reader(args.iface)
 read_lidar = make_lidar_reader(args.iface)
@@ -135,4 +146,5 @@ except KeyboardInterrupt:
     pass
 
 finally:
+    video.stop()
     rr.disconnect()
