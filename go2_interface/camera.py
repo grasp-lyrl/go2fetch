@@ -22,11 +22,13 @@ def decode_image(data):
 
 
 class CameraReader:
-    def __init__(self, iface, hz=15.0):
+    def __init__(self, iface, hz=15.0, decode=True):
         self.client = make_video_client(iface)
         self.frame = None
+        self.encoded = None
         self.code = None
         self.decode_ok = False
+        self.decode = decode
         self.running = True
         self.dt = 1.0 / hz if hz > 0 else 0.0
 
@@ -39,18 +41,26 @@ class CameraReader:
             self.code = code
 
             if code == 0:
-                frame = decode_image(data)
-                if frame is not None:
-                    self.frame = frame
-                    self.decode_ok = True
+                self.encoded = bytes(data)
+
+                if self.decode:
+                    frame = decode_image(self.encoded)
+                    if frame is not None:
+                        self.frame = frame
+                        self.decode_ok = True
+                    else:
+                        self.decode_ok = False
                 else:
-                    self.decode_ok = False
+                    self.decode_ok = True
 
             if self.dt > 0:
                 time.sleep(self.dt)
 
     def read(self):
         return self.frame
+
+    def read_encoded(self):
+        return self.encoded
 
     def status(self):
         return {"code": self.code, "decode_ok": self.decode_ok}
@@ -65,3 +75,7 @@ class CameraReader:
 
 def make_camera_reader(iface, hz=15.0):
     return CameraReader(iface, hz)
+
+
+def make_encoded_camera_reader(iface, hz=15.0):
+    return CameraReader(iface, hz, decode=False)
