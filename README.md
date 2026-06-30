@@ -14,6 +14,15 @@ source .venv/bin/activate
 # install dependencies
 python -m pip install --upgrade pip setuptools wheel
 pip install -r requirements.txt
+
+# install native video tools
+sudo apt update
+sudo apt install -y \
+  gstreamer1.0-tools \
+  gstreamer1.0-plugins-good \
+  gstreamer1.0-plugins-bad \
+  gstreamer1.0-plugins-ugly \
+  gstreamer1.0-libav
 ```
 
 ## Usage Example
@@ -30,7 +39,7 @@ Read state:
 # read state
 python -m examples.read_state enp129s0
 
-# stream images
+# stream camera snapshots to Rerun
 python -m examples.read_camera enp129s0
 ```
 
@@ -53,6 +62,10 @@ Replace `enp129s0` with your Go2 network interface.
 
 We save recordings in `logs/` by default.
 
+`logs/name.rrd` = state + lidar
+
+`logs/name.mp4` = camera video
+
 ```bash
 # record data
 python ./scripts/record.py enp129s0 --out logs/go2fetch.rrd
@@ -62,8 +75,9 @@ rerun logs/go2fetch.rrd
 
 # visualize data live
 python ./scripts/record.py enp129s0 --live
-```
 
-For now either visualize the data live or record them, but not concurrently.
+# visualize live and record concurrently
+python ./scripts/record.py enp129s0 --live --out logs/go2fetch.rrd
+```
 
 Replace `enp129s0` with your Go2 network interface.
