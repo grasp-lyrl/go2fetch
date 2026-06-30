@@ -3,12 +3,12 @@ from ultralytics import YOLO
 import cv2
 import numpy as np
 
-model = YOLO("yolov8n.pt")
+model = YOLO("yolo11n.pt")
 CONF = 0.5
 
 #rr.init("go2fetch_yolo")
 
-recording = cv2.VideoCapture("../data/test_1.mp4")
+recording = cv2.VideoCapture("../data/levine.mp4")
 
 if not recording.isOpened():
     print("no recording opened")
@@ -19,7 +19,7 @@ width = int(recording.get(cv2.CAP_PROP_FRAME_WIDTH))
 height = int(recording.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
 fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-output = cv2.VideoWriter("../data/test_1_yolo.mp4", fourcc, fps, (width, height))
+output = cv2.VideoWriter("../data/levine_yolo.mp4", fourcc, fps, (width, height))
 
 all_frames = []
 
