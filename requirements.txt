@@ -2,3 +2,4 @@ git+https://github.com/unitreerobotics/unitree_sdk2_python.git
 rerun-sdk
 opencv-python
 numpy
+matplotlib

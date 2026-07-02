@@ -1,20 +1,17 @@
 import rerun as rr
-import argparse
 import time
+import numpy as np
 
-def test():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("rrd_file")
-    args = parser.parse_args()
-
-    server = rr.server.Server(datasets={"datasets": [args.rrd_file]})
+def test(rrd_path: str):
+    
+    server = rr.server.Server(datasets={"datasets": [rrd_path]})
     recording = server.client().get_dataset("datasets")
 
     query = recording.reader(index="time")
     df = query.to_pandas()
 
     column_name = "/lidar/points:Points3D:positions"
-    
+
     for _, row in df.iterrows():
         xyz = row[column_name]
 
@@ -33,11 +30,13 @@ def get_lidar_points(rrd_path: str):
 
     column_name = "/lidar/points:Points3D:positions"
 
-    if column_name not in df.columns:
-        print("column cannot be found")
+    for timestamp, row in df.iterrows():
 
-    for _, row in df.iterrows():
         xyz = row[column_name]
 
-        if xyz is not None and len(xyz) > 0:
-            yield xyz
+        if xyz is None:
+            continue
+
+        points = np.vstack(xyz)
+
+        yield timestamp, points
