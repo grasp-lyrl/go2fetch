@@ -1,8 +1,8 @@
+import rerun as rr
 import argparse
 import time
-import rerun as rr
 
-def main():
+def test():
     parser = argparse.ArgumentParser()
     parser.add_argument("rrd_file")
     args = parser.parse_args()
@@ -11,13 +11,7 @@ def main():
     recording = server.client().get_dataset("datasets")
 
     query = recording.reader(index="time")
-
     df = query.to_pandas()
-
-    print("Available columns in your RRD file:")
-    for col in df.columns:
-        print(f" - {col}")
-    print("-" * 40)
 
     column_name = "/lidar/points:Points3D:positions"
     
@@ -28,5 +22,22 @@ def main():
             print(xyz[:3])
             time.sleep(1)
 
-if __name__ == "__main__":
-    main()
+
+def get_lidar_points(rrd_path: str):
+
+    server = rr.server.Server(datasets={"datasets": [rrd_path]})
+    recording = server.client().get_dataset("datasets")
+
+    query = recording.reader(index="time")
+    df = query.to_pandas()
+
+    column_name = "/lidar/points:Points3D:positions"
+
+    if column_name not in df.columns:
+        print("column cannot be found")
+
+    for _, row in df.iterrows():
+        xyz = row[column_name]
+
+        if xyz is not None and len(xyz) > 0:
+            yield xyz
