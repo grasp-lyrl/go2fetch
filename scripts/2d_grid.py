@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 from examples.read_lidar_rrd import get_lidar_points
 from examples.read_state_rrd import get_state_stream
 
-Z_MIN = -0.03
+Z_MIN = -0.5
 
 RESOLUTION = 0.05        
 
@@ -17,7 +17,7 @@ ORIGIN_Y = -10.0
 WORLD_OFFSET_Y = 10
 WORLD_OFFSET_X = 0
 
-occupancy_grid = np.zeros((MAP_HEIGHT, MAP_WIDTH), dtype=np.uint16)
+occupancy_grid = np.zeros((MAP_HEIGHT, MAP_WIDTH), dtype=np.int16)
 
 
 def lidar_to_robot(points):
@@ -75,12 +75,57 @@ def world_to_grid(points):
 
     return gx[valid], gy[valid]
 
-def update_grid(grid, xy):
+def bresenham_ray(x0, y0, x1, y1):
+
+    cells = []
+
+    dx = abs(x1 - x0)
+    dy = abs(y1 - y0)
+
+    sx = 1 if x0 < x1 else -1
+    sy = 1 if y0 < y1 else -1
+
+    err = dx - dy
+
+    while True:
+
+        cells.append((x0, y0))
+
+        if x0 == x1 and y0 == y1:
+            break
+
+        e2 = 2 * err
+
+        if e2 > -dy:
+            err -= dy
+            x0 += sx
+
+        if e2 < dx:
+            err += dx
+            y0 += sy
+
+    return cells
+
+def update_grid(grid, xy, robot_position):
 
     gx, gy = world_to_grid(xy)
-    
-    if len(gx) > 0:
-        grid[gy, gx] += 1
+    rx, ry = world_to_grid(robot_position.reshape(1, 2))
+
+    if len(rx) == 0:
+        return
+
+    robot_x = rx[0]
+    robot_y = ry[0]
+
+    for x, y in zip(gx, gy):
+
+        ray = bresenham_ray(robot_x, robot_y, x, y)
+
+        for free_x, free_y in ray[:-1]:
+            grid[free_y, free_x] -= 2
+
+        end_x, end_y = ray[-1]
+        grid[end_y, end_x] += 4
 
 lidar_stream = get_lidar_points("logs/levine.rrd")
 state_stream = get_state_stream("logs/levine.rrd")
@@ -106,6 +151,7 @@ for t_lidar, lidar_points in lidar_stream:
     except StopIteration:
         pass
 
+
     robot_points = lidar_to_robot(lidar_points)
 
     world_points = robot_to_world(
@@ -121,6 +167,7 @@ for t_lidar, lidar_points in lidar_stream:
     update_grid(
         occupancy_grid,
         xy_world,
+        robot_position[:2]
     )
 
 
@@ -130,8 +177,10 @@ plt.figure(figsize=(8, 8))
 
 img = np.zeros_like(occupancy_grid, dtype=np.uint8)
 
-img[occupancy_grid > 1] = 0
-img[occupancy_grid <= 1] = 255
+threshold = 3
+
+img[occupancy_grid > threshold] = 0
+img[occupancy_grid <= threshold] = 255
 
 plt.imshow(img, cmap="gray", vmin=0, vmax=255, origin="lower")
 plt.title("Occupancy Grid")
