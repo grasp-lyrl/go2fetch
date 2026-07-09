@@ -50,10 +50,13 @@ def get_state_stream(rrd_path: str):
     query = recording.reader(index="time")
     df = query.to_pandas()
 
+    # Added roll and pitch columns to required list
     required = [
         "/state/position/x:Scalars:scalars",
         "/state/position/y:Scalars:scalars",
         "/state/position/z:Scalars:scalars",
+        "/imu/rpy/roll:Scalars:scalars",
+        "/imu/rpy/pitch:Scalars:scalars",
         "/imu/rpy/yaw:Scalars:scalars",
     ]
 
@@ -67,12 +70,14 @@ def get_state_stream(rrd_path: str):
         y = row["/state/position/y:Scalars:scalars"]
         z = row["/state/position/z:Scalars:scalars"]
 
+        roll = row["/imu/rpy/roll:Scalars:scalars"]
+        pitch = row["/imu/rpy/pitch:Scalars:scalars"]
         yaw = row["/imu/rpy/yaw:Scalars:scalars"]
 
-        if x is None or y is None or yaw is None:
+        if x is None or y is None or z is None or roll is None or pitch is None or yaw is None:
             continue
 
         position = np.array([x.item(), y.item(), z.item()])
-        yaw = float(yaw.item())
+        rpy = np.array([float(roll.item()), float(pitch.item()), float(yaw.item())])
 
-        yield timestamp, position, yaw
+        yield timestamp, position, rpy

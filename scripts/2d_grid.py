@@ -4,67 +4,96 @@ import matplotlib.pyplot as plt
 from examples.read_lidar_rrd import get_lidar_points
 from examples.read_state_rrd import get_state_stream
 
-Z_MIN = -0.5
-
 RESOLUTION = 0.05        
-
 MAP_WIDTH = 1000      
 MAP_HEIGHT = 1000
 
-ORIGIN_X = -10.0          
-ORIGIN_Y = -10.0
+ORIGIN_X = -25.0          
+ORIGIN_Y = -25.0
 
-WORLD_OFFSET_Y = 10
-WORLD_OFFSET_X = 0
+Z_MIN = 0.1
+Z_MAX = 1.6
+EXCLUSION_RADIUS = 0.45
+MIN_RANGE = 0.2
+MAX_RANGE = 12.0
 
 occupancy_grid = np.zeros((MAP_HEIGHT, MAP_WIDTH), dtype=np.int16)
 
 
 def lidar_to_robot(points):
+    pitch_lidar = 2.8782
+    cp = np.cos(pitch_lidar)
+    sp = np.sin(pitch_lidar)
 
-    points[:, 0] += 0.28945
-    points[:, 1] += 0.0
-    points[:, 2] += -0.046825
-
-    points[:, 2] *= -1
-
-    return points
-
-
-def robot_to_world(points, position, yaw):
-
-    c = np.cos(yaw)
-    s = np.sin(yaw)
-
-    R = np.array([
-        [c, -s],
-        [s,  c]
+    R_lidar = np.array([
+        [ cp,  0.0,  sp],
+        [ 0.0, 1.0, 0.0],
+        [-sp,  0.0,  cp]
     ])
 
-    xy = points[:, :2]
+    xyz = points[:, :3]
+    xyz_rotated = (R_lidar @ xyz.T).T
 
-    xy_world = (R @ xy.T).T
+    xyz_rotated[:, 0] += 0.28945
+    xyz_rotated[:, 1] += 0.0
+    xyz_rotated[:, 2] += -0.046825
 
-    xy_world[:, 0] += position[0]
-    xy_world[:, 1] += position[1]
+    return xyz_rotated
 
-    return np.column_stack((xy_world, points[:, 2]))
 
-def filter_height(points):
-    height_mask = (points[:, 2] >= Z_MIN) 
+def robot_to_world(points, position, rpy):
+    roll, pitch, yaw = rpy
+
+    cr, sr = np.cos(roll), np.sin(roll)
+    cp, sp = np.cos(pitch), np.sin(pitch)
+    cy, sy = np.cos(yaw), np.sin(yaw)
+
+    R_x = np.array([
+        [1.0, 0.0, 0.0],
+        [0.0,  cr, -sr],
+        [0.0,  sr,  cr]
+    ])
+    R_y = np.array([
+        [ cp, 0.0,  sp],
+        [ 0.0, 1.0, 0.0],
+        [-sp, 0.0,  cp]
+    ])
+    R_z = np.array([
+        [cy, -sy, 0.0],
+        [sy,  cy, 0.0],
+        [0.0, 0.0, 1.0]
+    ])
+
+    R_body = R_z @ R_y @ R_x
+
+    xyz = points[:, :3]
+    xyz_world = (R_body @ xyz.T).T
+
+    xyz_world[:, 0] += position[0]
+    xyz_world[:, 1] += position[1]
+    xyz_world[:, 2] += position[2]
+
+    return xyz_world
+
+
+def filter_height(points, robot_position):
+    height_mask = (points[:, 2] >= Z_MIN) & (points[:, 2] <= Z_MAX)
     
-    distances = np.linalg.norm(points, axis=1)
+    relative_vectors = points[:, :3] - robot_position
     
-    body_mask = (distances > 0.35)
+    distances_3d = np.linalg.norm(relative_vectors, axis=1)
+    body_mask = (distances_3d > EXCLUSION_RADIUS)
+
+    distances_2d = np.linalg.norm(relative_vectors[:, :2], axis=1)
+    range_mask = (distances_2d >= MIN_RANGE) & (distances_2d <= MAX_RANGE)
     
-    final_mask = height_mask & body_mask
+    final_mask = height_mask & body_mask & range_mask
     return points[final_mask]
-
 
 def world_to_grid(points):
 
-    gx = ((points[:, 0] + WORLD_OFFSET_X - ORIGIN_X) / RESOLUTION).astype(int)
-    gy = ((points[:, 1] + WORLD_OFFSET_Y - ORIGIN_Y) / RESOLUTION).astype(int)
+    gx = ((points[:, 0] - ORIGIN_X) / RESOLUTION).astype(int)
+    gy = ((points[:, 1] - ORIGIN_Y) / RESOLUTION).astype(int)
 
     valid = (
         (gx >= 0) &
@@ -75,8 +104,8 @@ def world_to_grid(points):
 
     return gx[valid], gy[valid]
 
-def bresenham_ray(x0, y0, x1, y1):
 
+def bresenham_ray(x0, y0, x1, y1):
     cells = []
 
     dx = abs(x1 - x0)
@@ -122,67 +151,112 @@ def update_grid(grid, xy, robot_position):
         ray = bresenham_ray(robot_x, robot_y, x, y)
 
         for free_x, free_y in ray[:-1]:
-            grid[free_y, free_x] -= 2
+            grid[free_y, free_x] -= 1
+            if grid[free_y, free_x] < -100:
+                grid[free_y, free_x] = -100
 
         end_x, end_y = ray[-1]
         grid[end_y, end_x] += 4
+        if grid[end_y, end_x] > 100:
+            grid[end_y, end_x] = 100
+
+def interpolate_state(t_lidar, t1, pos1, rpy1, t2, pos2, rpy2):
+    if t2 == t1:
+        return pos1, rpy1
+    
+    lmbda = (t_lidar - t1) / (t2 - t1)
+    
+    interp_pos = (1 - lmbda) * pos1 + lmbda * pos2
+    
+    interp_rpy = (1 - lmbda) * rpy1 + lmbda * rpy2
+    
+    return interp_pos, interp_rpy
 
 lidar_stream = get_lidar_points("logs/levine.rrd")
-state_stream = get_state_stream("logs/levine.rrd")
+state_stream = list(get_state_stream("logs/levine.rrd")) 
+
+all_positions = np.array([state[1] for state in state_stream])
+min_x, min_y = np.min(all_positions[:, 0]), np.min(all_positions[:, 1])
+max_x, max_y = np.max(all_positions[:, 0]), np.max(all_positions[:, 1])
+
+center_x = (min_x + max_x) / 2.0
+center_y = (min_y + max_y) / 2.0
+
+ORIGIN_X = center_x - (MAP_WIDTH * RESOLUTION) / 2.0
+ORIGIN_Y = center_y - (MAP_HEIGHT * RESOLUTION) / 2.0
 
 state_iter = iter(state_stream)
+t_prev, pos_prev, rpy_prev = next(state_iter)
+t_next, pos_next, rpy_next = next(state_iter)
 
-t_state, robot_position, robot_yaw = next(state_iter)
-
+trajectory_points = []
 
 for t_lidar, lidar_points in lidar_stream:
 
     try:
-        while t_state < t_lidar:
-            t_next, pos_next, yaw_next = next(state_iter)
-
-            if t_next > t_lidar:
-                break
-
-            t_state = t_next
-            robot_position = pos_next
-            robot_yaw = yaw_next
+        while t_next < t_lidar:
+            t_prev, pos_prev, rpy_prev = t_next, pos_next, rpy_next
+            t_next, pos_next, rpy_next = next(state_iter)
 
     except StopIteration:
         pass
 
+    robot_position, robot_rpy = interpolate_state(
+        t_lidar, 
+        t_prev, pos_prev, rpy_prev, 
+        t_next, pos_next, rpy_next
+    )
 
     robot_points = lidar_to_robot(lidar_points)
 
     world_points = robot_to_world(
         robot_points,
         robot_position,
-        robot_yaw
+        robot_rpy
     )
-
-    world_points = filter_height(world_points)
+    world_points = filter_height(world_points, robot_position)
 
     xy_world = world_points[:, :2]
-
     update_grid(
         occupancy_grid,
         xy_world,
         robot_position[:2]
     )
+    
+    trajectory_points.append(robot_position[:2].copy())
 
 
 print("occupied:", np.sum(occupancy_grid > 0))
 
-plt.figure(figsize=(8, 8))
+# 1. Calculate the physical metric boundaries of the map
+x_min = ORIGIN_X
+x_max = ORIGIN_X + (MAP_WIDTH * RESOLUTION)
+y_min = ORIGIN_Y
+y_max = ORIGIN_Y + (MAP_HEIGHT * RESOLUTION)
 
+plt.figure(figsize=(9, 9))
+
+# Initialize image canvas
 img = np.zeros_like(occupancy_grid, dtype=np.uint8)
+img[:] = 127
+img[occupancy_grid >= 8] = 0
+img[occupancy_grid <= -8] = 255
 
-threshold = 3
+plt.imshow(img, cmap="gray", vmin=0, vmax=255, origin="lower", extent=[x_min, x_max, y_min, y_max])
 
-img[occupancy_grid > threshold] = 0
-img[occupancy_grid <= threshold] = 255
+trajectory_np = np.array(trajectory_points)
+plt.plot(trajectory_np[:, 0], trajectory_np[:, 1], color="blue", linewidth=1.5, label="trajectory")
 
-plt.imshow(img, cmap="gray", vmin=0, vmax=255, origin="lower")
-plt.title("Occupancy Grid")
-plt.axis("off")
+plt.scatter(trajectory_np[0, 0], trajectory_np[0, 1], color="green", s=50, zorder=5, label="start")
+plt.scatter(trajectory_np[-1, 0], trajectory_np[-1, 1], color="red", s=50, zorder=5, label="end")
+
+plt.xlim(x_min, x_max)
+plt.ylim(y_min, y_max)
+
+plt.xlabel("x (m)")
+plt.ylabel("y (m)")
+plt.title("grid with trajectory (m)")
+plt.grid(True, color="gainsboro", linestyle="--", linewidth=0.5)
+plt.legend(loc="upper right")
+
 plt.show()
