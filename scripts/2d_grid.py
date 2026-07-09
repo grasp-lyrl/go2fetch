@@ -4,6 +4,7 @@ import time
 
 from examples.read_lidar_rrd import get_lidar_points
 from examples.read_state_rrd import get_state_stream
+from scripts import exploration
 
 RESOLUTION = 0.05        
 MAP_WIDTH = 2000     
@@ -18,8 +19,8 @@ EXCLUSION_RADIUS = 0.45
 MIN_RANGE = 0.2
 MAX_RANGE = 12.0
 
-occupancy_grid = np.zeros((MAP_HEIGHT, MAP_WIDTH), dtype=np.int16)
-
+def create_grid():
+    return np.zeros((MAP_HEIGHT, MAP_WIDTH), dtype=np.int16)
 
 def lidar_to_robot(points):
     pitch_lidar = 2.8782
@@ -173,141 +174,128 @@ def interpolate_state(t_lidar, t1, pos1, rpy1, t2, pos2, rpy2):
     
     return interp_pos, interp_rpy
 
-lidar_stream = get_lidar_points("logs/levine.rrd")
+def plot_grid(grid, trajectory_points, origin_x, origin_y):
 
-state_stream = get_state_stream("logs/levine.rrd")
-state_iter = iter(state_stream)
+    print("occupied:", np.sum(grid > 0))
 
-t_prev, pos_prev, rpy_prev = next(state_iter)
-t_next, pos_next, rpy_next = next(state_iter)
+    x_min = origin_x
+    x_max = origin_x + (MAP_WIDTH * RESOLUTION)
+    y_min = origin_y
+    y_max = origin_y + (MAP_HEIGHT * RESOLUTION)
 
-ORIGIN_X = pos_prev[0] - (MAP_WIDTH * RESOLUTION) / 2.0
-ORIGIN_Y = pos_prev[1] - (MAP_HEIGHT * RESOLUTION) / 2.0
+    plt.figure(figsize=(9, 9))
 
-previous_lidar_time = None
-trajectory_points = []
+    img = np.zeros_like(grid, dtype=np.uint8)
+    img[:] = 127
+    img[grid >= 8] = 0
+    img[grid <= -8] = 255
 
-plt.ion()
-fig, ax = plt.subplots(figsize=(9, 9))
-
-for t_lidar, lidar_points in lidar_stream:
-    
-    if previous_lidar_time is not None:
-        dt = (t_lidar - previous_lidar_time) / 1000.0
-        time.sleep(dt)
-
-    previous_lidar_time = t_lidar
-
-    try:
-        while t_next < t_lidar:
-            t_prev, pos_prev, rpy_prev = t_next, pos_next, rpy_next
-            t_next, pos_next, rpy_next = next(state_iter)
-
-    except StopIteration:
-        pass
-
-    robot_position, robot_rpy = interpolate_state(
-        t_lidar, 
-        t_prev, pos_prev, rpy_prev, 
-        t_next, pos_next, rpy_next
+    plt.imshow(
+        img,
+        cmap="gray",
+        vmin=0,
+        vmax=255,
+        origin="lower",
+        extent=[x_min, x_max, y_min, y_max]
     )
 
-    robot_points = lidar_to_robot(lidar_points)
+    trajectory_np = np.array(trajectory_points)
 
-    world_points = robot_to_world(
-        robot_points,
-        robot_position,
-        robot_rpy
+    plt.plot(
+        trajectory_np[:, 0],
+        trajectory_np[:, 1],
+        color="blue",
+        linewidth=1.5,
+        label="trajectory"
     )
-    world_points = filter_height(world_points, robot_position)
 
-    xy_world = world_points[:, :2]
-    update_grid(
-        occupancy_grid,
-        xy_world,
-        robot_position[:2]
-    )
-    
-    trajectory_points.append(robot_position[:2].copy())
-
-
-    if len(trajectory_points) % 10 == 0:
-
-        img = np.zeros_like(occupancy_grid, dtype=np.uint8)
-        img[:] = 127
-        img[occupancy_grid >= 8] = 0
-        img[occupancy_grid <= -8] = 255
-
-        ax.clear()
-
-        ax.imshow(
-            img,
-            cmap="gray",
-            vmin=0,
-            vmax=255,
-            origin="lower",
-            extent=[
-                ORIGIN_X,
-                ORIGIN_X + MAP_WIDTH * RESOLUTION,
-                ORIGIN_Y,
-                ORIGIN_Y + MAP_HEIGHT * RESOLUTION
-            ]
-        )
-
-        trajectory_np = np.array(trajectory_points)
-
-        ax.plot(
-            trajectory_np[:, 0],
-            trajectory_np[:, 1],
-            color="blue",
-            linewidth=1.5
-        )
-
-        ax.scatter(
+    plt.scatter(
         trajectory_np[0, 0],
         trajectory_np[0, 1],
         color="green",
         s=50,
-        zorder=5
+        zorder=5,
+        label="start"
+    )
+
+    plt.scatter(
+        trajectory_np[-1, 0],
+        trajectory_np[-1, 1],
+        color="red",
+        s=50,
+        zorder=5,
+        label="end"
+    )
+
+    plt.xlabel("x (m)")
+    plt.ylabel("y (m)")
+    plt.title("grid with trajectory (m)")
+    plt.legend()
+    plt.show(block=True)
+
+
+if __name__ == "__main__":
+
+    occupancy_grid = create_grid()
+
+    lidar_stream = get_lidar_points("logs/levine.rrd")
+
+    state_stream = get_state_stream("logs/levine.rrd")
+    state_iter = iter(state_stream)
+
+    t_prev, pos_prev, rpy_prev = next(state_iter)
+    t_next, pos_next, rpy_next = next(state_iter)
+
+    ORIGIN_X = pos_prev[0] - (MAP_WIDTH * RESOLUTION) / 2.0
+    ORIGIN_Y = pos_prev[1] - (MAP_HEIGHT * RESOLUTION) / 2.0
+
+    previous_lidar_time = None
+    trajectory_points = []
+
+    for t_lidar, lidar_points in lidar_stream:
+
+        if previous_lidar_time is not None:
+            dt = (t_lidar - previous_lidar_time) / 1000.0
+            time.sleep(dt)
+
+        previous_lidar_time = t_lidar
+
+        try:
+            while t_next < t_lidar:
+                t_prev, pos_prev, rpy_prev = t_next, pos_next, rpy_next
+                t_next, pos_next, rpy_next = next(state_iter)
+
+        except StopIteration:
+            pass
+
+        robot_position, robot_rpy = interpolate_state(
+            t_lidar,
+            t_prev, pos_prev, rpy_prev,
+            t_next, pos_next, rpy_next
         )
 
-        ax.set_title("Live Occupancy Grid")
-        ax.set_xlabel("x (m)")
-        ax.set_ylabel("y (m)")
+        robot_points = lidar_to_robot(lidar_points)
 
-        plt.pause(0.001)
+        world_points = robot_to_world(
+            robot_points,
+            robot_position,
+            robot_rpy
+        )
 
+        world_points = filter_height(
+            world_points,
+            robot_position
+        )
 
+        update_grid(
+            occupancy_grid,
+            world_points[:, :2],
+            robot_position[:2]
+        )
 
-print("occupied:", np.sum(occupancy_grid > 0))
+        frontier_cells = exploration.detect_frontiers(occupancy_grid)
+        exploration.visualize_grid(occupancy_grid, frontier_cells)
 
-x_min = ORIGIN_X
-x_max = ORIGIN_X + (MAP_WIDTH * RESOLUTION)
-y_min = ORIGIN_Y
-y_max = ORIGIN_Y + (MAP_HEIGHT * RESOLUTION)
-
-plt.figure(figsize=(9, 9))
-
-img = np.zeros_like(occupancy_grid, dtype=np.uint8)
-img[:] = 127
-img[occupancy_grid >= 8] = 0
-img[occupancy_grid <= -8] = 255
-
-plt.imshow(img, cmap="gray", vmin=0, vmax=255, origin="lower", extent=[x_min, x_max, y_min, y_max])
-
-trajectory_np = np.array(trajectory_points)
-plt.plot(trajectory_np[:, 0], trajectory_np[:, 1], color="blue", linewidth=1.5, label="trajectory")
-
-plt.scatter(trajectory_np[0, 0], trajectory_np[0, 1], color="green", s=50, zorder=5, label="start")
-plt.scatter(trajectory_np[-1, 0], trajectory_np[-1, 1], color="red", s=50, zorder=5, label="end")
-
-plt.xlim(x_min, x_max)
-plt.ylim(y_min, y_max)
-
-plt.xlabel("x (m)")
-plt.ylabel("y (m)")
-plt.title("grid with trajectory (m)")
-plt.grid(True, color="gainsboro", linestyle="--", linewidth=0.5)
-plt.legend(loc="upper right")
-
-plt.show()
+        trajectory_points.append(robot_position[:2].copy())
+    
+    #plot_grid(occupancy_grid, trajectory_points, ORIGIN_X, ORIGIN_Y)
