@@ -1,8 +1,9 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import numpy as np
-from collections import deque
 
+
+#outputs list of coordinates [(x,y),(x,y)...] each (x,y) being a frontier cell
 def detect_frontiers(grid_array):
     frontier_cells = set()
     rows, cols = grid_array.shape
@@ -24,8 +25,9 @@ def detect_frontiers(grid_array):
                             
     return frontier_cells
 
-def visualize_grid(grid_array, frontier_cells):
 
+#plt visual stuff
+def visualize_grid(grid_array, origin_x, origin_y, frontier_cells, resolution=0.05):
     plt.clf() 
     
     display_img = np.zeros((grid_array.shape[0], grid_array.shape[1], 3), dtype=np.uint8)
@@ -34,17 +36,26 @@ def visualize_grid(grid_array, frontier_cells):
     display_img[grid_array < 0] = [255, 255, 255] 
     display_img[grid_array == 0] = [147, 147, 147]
     
-    plt.imshow(display_img, origin="lower")
+    rows, cols = grid_array.shape
+    x_min = origin_x
+    x_max = origin_x + (cols * resolution)
+    y_min = origin_y
+    y_max = origin_y + (rows * resolution)
+    
+    plt.imshow(display_img, origin="lower", extent=[x_min, x_max, y_min, y_max])
  
     if frontier_cells:
-        rows = [cell[0] for cell in frontier_cells]
-        cols = [cell[1] for cell in frontier_cells]
+        frontier_xs = [(cell[1] * resolution) + origin_x for cell in frontier_cells]
+        frontier_ys = [(cell[0] * resolution) + origin_y for cell in frontier_cells]
         
-        plt.scatter(cols, rows, c='cyan', s=2, label='Frontiers')
+        plt.scatter(frontier_xs, frontier_ys, c='cyan', s=2, label='Frontiers', zorder=2)
         
+    plt.xlabel("X (meters)")
+    plt.ylabel("Y (meters)")
     plt.title("Exploration Pipeline: Frontier Detection")
-    plt.pause(0.005) 
 
+
+#outputs list of dictionaries containing attributes of frontier clusters
 def cluster_frontiers(grid_array, frontier_cells, robot_grid_cell, min_cluster_size=5):
     unvisited = set(frontier_cells)
     valid_clusters = []
@@ -107,5 +118,59 @@ def cluster_frontiers(grid_array, frontier_cells, robot_grid_cell, min_cluster_s
             'distance': distance,
             'reachable': reachable
         })
-        
+
     return valid_clusters
+
+
+#outputs list of coordinates [(start_x, start_y)...(end_x, end_y)] of BFS path to goal cluster
+def plan_path(grid_array, start, goal, inflation_radius=3):
+    rows, cols = grid_array.shape
+    
+    blocked_mask = (grid_array >= 0) 
+    inflated_mask = blocked_mask.copy()
+    wall_rows, wall_cols = np.where(grid_array > 0)
+    
+    for r, c in zip(wall_rows, wall_cols):
+        r_min = max(0, r - inflation_radius)
+        r_max = min(rows, r + inflation_radius + 1)
+        c_min = max(0, c - inflation_radius)
+        c_max = min(cols, c + inflation_radius + 1)
+        inflated_mask[r_min:r_max, c_min:c_max] = True
+
+    inflated_mask[start[0], start[1]] = False
+    inflated_mask[goal[0], goal[1]] = False
+
+    queue = [start]
+    parent_map = {start: None} 
+    visited = set([start])
+    
+    directions = [(-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (-1, 1), (1, -1), (1, 1)]
+    
+    found = False
+    while queue:
+        current = queue.pop(0)
+        
+        if current == goal:
+            found = True
+            break
+            
+        for dr, dc in directions:
+            neighbor = (current[0] + dr, current[1] + dc)
+            
+            if 0 <= neighbor[0] < rows and 0 <= neighbor[1] < cols:
+                if neighbor not in visited and not inflated_mask[neighbor[0], neighbor[1]]:
+                    visited.add(neighbor)
+                    parent_map[neighbor] = current
+                    queue.append(neighbor)
+                    
+    if not found:
+        return None 
+        
+    path = []
+    curr = goal
+    while curr is not None:
+        path.append(curr)
+        curr = parent_map[curr]
+        
+    path.reverse() 
+    return path

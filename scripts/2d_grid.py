@@ -296,13 +296,15 @@ if __name__ == "__main__":
 
         frame_count += 1
 
-        if frame_count % 15 == 0:
+        if frame_count % 10 == 0:
             frontier_cells = exploration.detect_frontiers(occupancy_grid)
 
             rx_grid, ry_grid = world_to_grid(robot_position[:2].reshape(1, 2))
             
             if len(rx_grid) > 0:
                 robot_grid_cell = (ry_grid[0], rx_grid[0]) 
+                
+                exploration.visualize_grid(occupancy_grid, ORIGIN_X, ORIGIN_Y, frontier_cells)
 
                 frontier_clusters = exploration.cluster_frontiers(
                     occupancy_grid, 
@@ -312,12 +314,37 @@ if __name__ == "__main__":
                 
                 reachable_clusters = [c for c in frontier_clusters if c['reachable']]
                 if reachable_clusters:
-                    reachable_clusters.sort(key=lambda x: x['distance'])
+                    reachable_clusters.sort(key=lambda x: x['distance']) #go to closest cluster
+                    #reachable_clusters.sort(key=lambda x: x['size'], reverse=True) #go to largest cluster
                     best_goal = reachable_clusters[0]
-                    print(f"Centroid {best_goal['center']} | Size: {best_goal['size']}")
-
-            exploration.visualize_grid(occupancy_grid, frontier_cells)
-
+                    
+                    goal_row, goal_col = best_goal['center']
+                    goal_x = (goal_col * RESOLUTION) + ORIGIN_X
+                    goal_y = (goal_row * RESOLUTION) + ORIGIN_Y
+                    
+                    print(f"GRID: ({goal_row}, {goal_col}) | WORLD: ({goal_x:.2f}, {goal_y:.2f})")
+                    
+                    path = exploration.plan_path(
+                        occupancy_grid, 
+                        start=robot_grid_cell, 
+                        goal=(goal_row, goal_col),
+                        inflation_radius=3  
+                    )
+                    
+                    goal_cells = best_goal['cells']
+                    cluster_xs = [(cell[1] * RESOLUTION) + ORIGIN_X for cell in goal_cells]
+                    cluster_ys = [(cell[0] * RESOLUTION) + ORIGIN_Y for cell in goal_cells]
+                    
+                    plt.scatter(cluster_xs, cluster_ys, c='magenta', s=6, zorder=5)
+                    plt.scatter(goal_x, goal_y, c='yellow', marker='X', s=80, edgecolors='black', zorder=10)
+                    
+                    if path:
+                        path_xs = [(wp[1] * RESOLUTION) + ORIGIN_X for wp in path]
+                        path_ys = [(wp[0] * RESOLUTION) + ORIGIN_Y for wp in path]
+                        
+                        plt.plot(path_xs, path_ys, c='blue', linewidth=2, linestyle='-', zorder=7)
+                
+                plt.pause(0.005)
         trajectory_points.append(robot_position[:2].copy())
     
     #plot_grid(occupancy_grid, trajectory_points, ORIGIN_X, ORIGIN_Y)
