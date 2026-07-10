@@ -251,7 +251,8 @@ if __name__ == "__main__":
 
     previous_lidar_time = None
     trajectory_points = []
-
+    frame_count = 0
+    
     for t_lidar, lidar_points in lidar_stream:
 
         if previous_lidar_time is not None:
@@ -293,8 +294,29 @@ if __name__ == "__main__":
             robot_position[:2]
         )
 
-        frontier_cells = exploration.detect_frontiers(occupancy_grid)
-        exploration.visualize_grid(occupancy_grid, frontier_cells)
+        frame_count += 1
+
+        if frame_count % 15 == 0:
+            frontier_cells = exploration.detect_frontiers(occupancy_grid)
+
+            rx_grid, ry_grid = world_to_grid(robot_position[:2].reshape(1, 2))
+            
+            if len(rx_grid) > 0:
+                robot_grid_cell = (ry_grid[0], rx_grid[0]) 
+
+                frontier_clusters = exploration.cluster_frontiers(
+                    occupancy_grid, 
+                    frontier_cells, 
+                    robot_grid_cell
+                )
+                
+                reachable_clusters = [c for c in frontier_clusters if c['reachable']]
+                if reachable_clusters:
+                    reachable_clusters.sort(key=lambda x: x['distance'])
+                    best_goal = reachable_clusters[0]
+                    print(f"Centroid {best_goal['center']} | Size: {best_goal['size']}")
+
+            exploration.visualize_grid(occupancy_grid, frontier_cells)
 
         trajectory_points.append(robot_position[:2].copy())
     
