@@ -327,13 +327,13 @@ if __name__ == "__main__":
             if len(rx_grid) > 0:
                 robot_grid_cell = (ry_grid[0], rx_grid[0]) 
                 
-                frontier_cells = exploration.detect_frontiers(
+                frontier_cells = exploration.detect_frontiers_cv2(
                     occupancy_grid, 
                     robot_grid_cell,
                     resolution=RESOLUTION
                 )
 
-                frontier_clusters = exploration.cluster_frontiers_cv2( #_cv2 for the opencv version, no cv2 for regular
+                frontier_clusters = exploration.cluster_frontiers_cv2(
                     occupancy_grid, 
                     frontier_cells, 
                     robot_grid_cell,
@@ -347,7 +347,6 @@ if __name__ == "__main__":
                 else:
                     all_centers_scat.set_offsets(np.empty((0, 2)))
 
-                
                 grid_color = np.zeros((occupancy_grid.shape[0], occupancy_grid.shape[1], 3), dtype=np.uint8)
                 grid_color[occupancy_grid >= 8] = [0, 0, 0]        
                 grid_color[occupancy_grid <= -8] = [255, 255, 255] 
@@ -362,13 +361,37 @@ if __name__ == "__main__":
                     frontiers_scat.set_offsets(np.empty((0, 2)))
 
                 path_xs, path_ys = [], []
-
+                
                 reachable_clusters = [c for c in frontier_clusters if c['reachable']]
+                best_goal = None
+                
                 if reachable_clusters:
-                    reachable_clusters.sort(key=lambda x: x['distance'])
-                    best_goal = reachable_clusters[0]
-                    
+                    if len(reachable_clusters) == 1:
+                        best_goal = reachable_clusters[0]
+                    else:
+                        max_size = max(c['size'] for c in reachable_clusters)
+                        max_dist = max(c['distance'] for c in reachable_clusters)
+                        
+                        highest_score = -1.0
+                        w_size = 0.4
+                        w_dist = 0.6
+                        
+                        for cluster in reachable_clusters:
+                            norm_size = cluster['size'] / max_size if max_size > 0 else 0
+                            norm_dist = (max_dist - cluster['distance']) / max_dist if max_dist > 0 else 0                            
+                            score = (w_size * norm_size) + (w_dist * norm_dist)
+                            
+                            if score > highest_score:
+                                highest_score = score
+                                best_goal = cluster
+
                     goal_row, goal_col = best_goal['center']
+                    
+                    if occupancy_grid[goal_row, goal_col] >= 8:
+                        safe_cells = [cell for cell in best_goal['cells'] if occupancy_grid[cell[0], cell[1]] <= -8]
+                        if safe_cells:
+                            goal_row, goal_col = min(safe_cells, key=lambda c: (c[0]-goal_row)**2 + (c[1]-goal_col)**2)
+
                     goal_x = (goal_col + 0.5) * RESOLUTION + ORIGIN_X
                     goal_y = (goal_row + 0.5) * RESOLUTION + ORIGIN_Y
                     
@@ -388,20 +411,18 @@ if __name__ == "__main__":
                     if path:
                         path_xs = [((wp[1] + 0.5) * RESOLUTION) + ORIGIN_X for wp in path]
                         path_ys = [((wp[0] + 0.5) * RESOLUTION) + ORIGIN_Y for wp in path]
-                else:
-                    selected_scat.set_offsets(np.empty((0, 2)))
-                    goal_scat.set_offsets(np.empty((0, 2)))
 
                 path_line.set_data(path_xs, path_ys)
 
-                if len(trajectory_points) > 0:
-                    traj_np = np.array(trajectory_points)
-                    trajectory_line.set_data(traj_np[:, 0], traj_np[:, 1])
-                
-                robot_marker.set_offsets(np.c_[[robot_position[0]], [robot_position[1]]])
-                
-                fig.canvas.draw_idle()
-                plt.pause(0.001)
-        trajectory_points.append(robot_position[:2].copy())
+ 
+        if len(trajectory_points) > 0:
+            traj_np = np.array(trajectory_points)
+            trajectory_line.set_data(traj_np[:, 0], traj_np[:, 1])
+        
+        robot_marker.set_offsets(np.c_[[robot_position[0]], [robot_position[1]]])
+        
+        fig.canvas.draw_idle()
+        plt.pause(0.001)
+
     
     #plot_grid(occupancy_grid, trajectory_points, ORIGIN_X, ORIGIN_Y)

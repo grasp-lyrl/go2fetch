@@ -33,6 +33,36 @@ def detect_frontiers(grid_array, robot_grid_cell, resolution=0.05, radius_m=10.0
     return frontier_cells
 
 
+def detect_frontiers_cv2(grid_array, robot_grid_cell, resolution=0.05, radius_m=10.0):
+    rows, cols = grid_array.shape
+    r_robot, c_robot = robot_grid_cell
+    
+    explored_mask = np.where((grid_array <= -8) | (grid_array >= 8), 255, 0).astype(np.uint8)
+    
+    contours, _ = cv2.findContours(explored_mask, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
+    
+    frontier_cells = set()
+    radius_pixels = int(radius_m / resolution)
+    
+    r_min, r_max = r_robot - radius_pixels, r_robot + radius_pixels
+    c_min, c_max = c_robot - radius_pixels, c_robot + radius_pixels
+
+    for contour in contours:
+        for pt in contour:
+            c, r = int(pt[0][0]), int(pt[0][1]) 
+            
+            if not (r_min <= r <= r_max and c_min <= c <= c_max):
+                continue
+                
+            if grid_array[r, c] >= 8:
+                continue
+                
+            if grid_array[r, c] <= -8:
+                frontier_cells.add((r, c))
+                
+    return frontier_cells
+
+
 #plt visual stuff
 def visualize_grid(grid_array, origin_x, origin_y, frontier_cells, resolution=0.05):
     plt.clf() 
