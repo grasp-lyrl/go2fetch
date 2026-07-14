@@ -1,25 +1,31 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import numpy as np
+from collections import deque
 
 
 #outputs list of coordinates [(x,y),(x,y)...] each (x,y) being a frontier cell
-def detect_frontiers(grid_array):
+def detect_frontiers(grid_array, robot_grid_cell, resolution=0.05, radius_m=10.0):
     frontier_cells = set()
     rows, cols = grid_array.shape
+    r_robot, c_robot = robot_grid_cell
     
-    dr = [-1, 1, 0, 0]
+    radius_pixels = int(radius_m / resolution)
+    r_min = max(0, r_robot - radius_pixels)
+    r_max = min(rows, r_robot + radius_pixels + 1)
+    c_min = max(0, c_robot - radius_pixels)
+    c_max = min(cols, c_robot + radius_pixels + 1)
+    
+    dr = [-1, 1, 0, 0] 
     dc = [0, 0, -1, 1]
     
-    for r in range(rows):
-        for c in range(cols):
-            if grid_array[r, c] < 0:
-                
+    for r in range(r_min, r_max):
+        for c in range(c_min, c_max):
+            if grid_array[r, c] <= -8:
                 for i in range(4):
                     nr, nc = r + dr[i], c + dc[i]
-                    
                     if 0 <= nr < rows and 0 <= nc < cols:
-                        if grid_array[nr, nc] == 0:
+                        if -8 < grid_array[nr, nc] < 8:
                             frontier_cells.add((r, c))
                             break 
                             
@@ -56,61 +62,63 @@ def visualize_grid(grid_array, origin_x, origin_y, frontier_cells, resolution=0.
 
 
 #outputs list of dictionaries containing attributes of frontier clusters
-def cluster_frontiers(grid_array, frontier_cells, robot_grid_cell, min_cluster_size=5):
+def cluster_frontiers(grid_array, frontier_cells, robot_grid_cell, resolution=0.05, radius_m=10.0, min_cluster_size=5):
+
+    rows, cols = grid_array.shape
+    r_robot, c_robot = robot_grid_cell
+    
+    radius_pixels = int(radius_m / resolution)
+    r_min = max(0, r_robot - radius_pixels)
+    r_max = min(rows, r_robot + radius_pixels + 1)
+    c_min = max(0, c_robot - radius_pixels)
+    c_max = min(cols, c_robot + radius_pixels + 1)
+
+    reachable_set = {robot_grid_cell}
+    queue = deque([robot_grid_cell]) 
+    
+    dr_path = [-1, 1, 0, 0, -1, -1, 1, 1]
+    dc_path = [0, 0, -1, 1, -1, 1, -1, 1]
+    
+    while queue:
+        curr_r, curr_c = queue.popleft()
+        for i in range(8):
+            nr, nc = curr_r + dr_path[i], curr_c + dc_path[i]
+            if r_min <= nr < r_max and c_min <= nc < c_max:
+                if (nr, nc) not in reachable_set and grid_array[nr, nc] <= -8: 
+                    reachable_set.add((nr, nc))
+                    queue.append((nr, nc))
+
     unvisited = set(frontier_cells)
     valid_clusters = []
-    
     dr_8 = [-1, -1, -1, 0, 0, 1, 1, 1]
     dc_8 = [-1, 0, 1, -1, 1, -1, 0, 1]
-    
-    dr_4 = [-1, 1, 0, 0]
-    dc_4 = [0, 0, -1, 1]
-    rows, cols = grid_array.shape
     
     while unvisited:
         start_cell = unvisited.pop()
         current_cluster = [start_cell]
+        q = deque([start_cell])
         
-        queue = [start_cell]
-        while queue:
-            curr_r, curr_c = queue.pop() 
+        while q:
+            curr_r, curr_c = q.popleft() 
             for i in range(8):
-                nr, nc = curr_r + dr_8[i], curr_c + dc_8[i]
-                neighbor = (nr, nc)
+                neighbor = (curr_r + dr_8[i], curr_c + dc_8[i])
                 if neighbor in unvisited:
                     unvisited.remove(neighbor)
                     current_cluster.append(neighbor)
-                    queue.append(neighbor)
+                    q.append(neighbor)
                     
         cluster_size = len(current_cluster)
-        if cluster_size < min_cluster_size:
+        if cluster_size < min_cluster_size: 
             continue 
             
         avg_row = int(np.mean([cell[0] for cell in current_cluster]))
         avg_col = int(np.mean([cell[1] for cell in current_cluster]))
-        center_cell = (avg_row, avg_col)
+        center_cell = min(current_cluster, key=lambda c: (c[0] - avg_row)**2 + (c[1] - avg_col)**2)
         
-        distance = np.sqrt((avg_row - robot_grid_cell[0])**2 + (avg_col - robot_grid_cell[1])**2)
+        distance = np.sqrt((center_cell[0] - r_robot)**2 + (center_cell[1] - c_robot)**2)
         
-        reachable = False
-        if grid_array[center_cell[0], center_cell[1]] <= 0:  
-            path_queue = [robot_grid_cell]
-            path_visited = {robot_grid_cell}
-            
-            while path_queue:
-                curr_r, curr_c = path_queue.pop() 
-                
-                if (curr_r, curr_c) == center_cell:
-                    reachable = True
-                    break
-                    
-                for i in range(4):
-                    nr, nc = curr_r + dr_4[i], curr_c + dc_4[i]
-                    if 0 <= nr < rows and 0 <= nc < cols:
-                        if grid_array[nr, nc] < 0 and (nr, nc) not in path_visited:
-                            path_visited.add((nr, nc))
-                            path_queue.append((nr, nc))
-                            
+        reachable = center_cell in reachable_set
+        
         valid_clusters.append({
             'cells': current_cluster,
             'size': cluster_size,
@@ -121,28 +129,49 @@ def cluster_frontiers(grid_array, frontier_cells, robot_grid_cell, min_cluster_s
 
     return valid_clusters
 
-
 #outputs list of coordinates [(start_x, start_y)...(end_x, end_y)] of BFS path to goal cluster
-def plan_path(grid_array, start, goal, inflation_radius=3):
+def plan_path(grid_array, start, goal, inflation_radius=3, resolution=0.05, radius_m=10.0):
+
+    for current_radius in range(inflation_radius, -1, -1):
+        path = _plan_path_internal(grid_array, start, goal, current_radius, resolution, radius_m)
+        if path is not None:
+            return path
+            
+    return None 
+
+def _plan_path_internal(grid_array, start, goal, inflation_radius, resolution, radius_m):
     rows, cols = grid_array.shape
+    r_start, c_start = start
     
-    blocked_mask = (grid_array >= 0) 
+    radius_pixels = int(radius_m / resolution)
+    r_min = max(0, r_start - radius_pixels)
+    r_max = min(rows, r_start + radius_pixels + 1)
+    c_min = max(0, c_start - radius_pixels)
+    c_max = min(cols, c_start + radius_pixels + 1)
+    
+    blocked_mask = (grid_array >= 8)
     inflated_mask = blocked_mask.copy()
-    wall_rows, wall_cols = np.where(grid_array > 0)
     
-    for r, c in zip(wall_rows, wall_cols):
-        r_min = max(0, r - inflation_radius)
-        r_max = min(rows, r + inflation_radius + 1)
-        c_min = max(0, c - inflation_radius)
-        c_max = min(cols, c + inflation_radius + 1)
-        inflated_mask[r_min:r_max, c_min:c_max] = True
+    local_slice = grid_array[r_min:r_max, c_min:c_max]
+    wall_rows, wall_cols = np.where(local_slice >= 8)
+    
+    if inflation_radius > 0:
+        for r_local, c_local in zip(wall_rows, wall_cols):
+            r_global = r_local + r_min
+            c_global = c_local + c_min
+            
+            r_low = max(r_min, r_global - inflation_radius)
+            r_high = min(r_max, r_global + inflation_radius + 1)
+            c_low = max(c_min, c_global - inflation_radius)
+            c_high = min(c_max, c_global + inflation_radius + 1)
+            inflated_mask[r_low:r_high, c_low:c_high] = True
 
     inflated_mask[start[0], start[1]] = False
     inflated_mask[goal[0], goal[1]] = False
 
     queue = [start]
     parent_map = {start: None} 
-    visited = set([start])
+    visited = {start}
     
     directions = [(-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (-1, 1), (1, -1), (1, 1)]
     
@@ -157,7 +186,7 @@ def plan_path(grid_array, start, goal, inflation_radius=3):
         for dr, dc in directions:
             neighbor = (current[0] + dr, current[1] + dc)
             
-            if 0 <= neighbor[0] < rows and 0 <= neighbor[1] < cols:
+            if r_min <= neighbor[0] < r_max and c_min <= neighbor[1] < c_max:
                 if neighbor not in visited and not inflated_mask[neighbor[0], neighbor[1]]:
                     visited.add(neighbor)
                     parent_map[neighbor] = current

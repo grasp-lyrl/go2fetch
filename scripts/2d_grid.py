@@ -252,6 +252,30 @@ if __name__ == "__main__":
     previous_lidar_time = None
     trajectory_points = []
     frame_count = 0
+
+    plt.ion()  
+    fig, ax = plt.subplots(figsize=(8, 8))
+
+    x_min, x_max = ORIGIN_X, ORIGIN_X + (MAP_WIDTH * RESOLUTION)
+    y_min, y_max = ORIGIN_Y, ORIGIN_Y + (MAP_HEIGHT * RESOLUTION)
+
+    display_img = np.zeros((MAP_HEIGHT, MAP_WIDTH, 3), dtype=np.uint8)
+    im_artist = ax.imshow(display_img, origin="lower", extent=[x_min, x_max, y_min, y_max])
+
+    frontiers_scat = ax.scatter([], [], c='cyan', s=2, label='Frontiers', zorder=2)
+    all_centers_scat = ax.scatter([], [], c='orange', marker='o', s=10, edgecolors='black', label='All Cluster Centers', zorder=3)
+    selected_scat = ax.scatter([], [], c='magenta', s=6, label='Selected Goal Cluster', zorder=4)
+    goal_scat = ax.scatter([], [], c='yellow', marker='X', s=25, edgecolors='black', label='Goal Centroid', zorder=6)
+
+    trajectory_line, = ax.plot([], [], c='blue', linewidth=1.0, alpha=0.7, zorder=3, label='Traveled Path')
+    path_line, = ax.plot([], [], c='blue', linewidth=2, zorder=5, label='Planned Path')
+
+    robot_marker = ax.scatter([], [], c='blue', marker='s', s=20, label='Robot', zorder=11)
+
+    ax.set_xlabel("X (meters)")
+    ax.set_ylabel("Y (meters)")
+    ax.set_title("Exploration Pipeline: High-Performance Persistent BFS")
+    ax.legend(loc='upper right')
     
     for t_lidar, lidar_points in lidar_stream:
 
@@ -294,35 +318,59 @@ if __name__ == "__main__":
             robot_position[:2]
         )
 
+        trajectory_points.append(robot_position[:2].copy())
         frame_count += 1
 
         if frame_count % 10 == 0:
-            frontier_cells = exploration.detect_frontiers(occupancy_grid)
-
             rx_grid, ry_grid = world_to_grid(robot_position[:2].reshape(1, 2))
             
             if len(rx_grid) > 0:
                 robot_grid_cell = (ry_grid[0], rx_grid[0]) 
                 
-                exploration.visualize_grid(occupancy_grid, ORIGIN_X, ORIGIN_Y, frontier_cells)
+                frontier_cells = exploration.detect_frontiers(
+                    occupancy_grid, 
+                    robot_grid_cell,
+                    resolution=RESOLUTION
+                )
 
                 frontier_clusters = exploration.cluster_frontiers(
                     occupancy_grid, 
                     frontier_cells, 
-                    robot_grid_cell
+                    robot_grid_cell,
+                    resolution=RESOLUTION
                 )
+
+                if frontier_clusters:
+                    all_c_xs = [((cl['center'][1] + 0.5) * RESOLUTION) + ORIGIN_X for cl in frontier_clusters]
+                    all_c_ys = [((cl['center'][0] + 0.5) * RESOLUTION) + ORIGIN_Y for cl in frontier_clusters]
+                    all_centers_scat.set_offsets(np.c_[all_c_xs, all_c_ys])
+                else:
+                    all_centers_scat.set_offsets(np.empty((0, 2)))
+
                 
+                grid_color = np.zeros((occupancy_grid.shape[0], occupancy_grid.shape[1], 3), dtype=np.uint8)
+                grid_color[occupancy_grid >= 8] = [0, 0, 0]        
+                grid_color[occupancy_grid <= -8] = [255, 255, 255] 
+                grid_color[(occupancy_grid > -8) & (occupancy_grid < 8)] = [147, 147, 147] 
+                im_artist.set_data(grid_color)
+                
+                if frontier_cells:
+                    f_xs = [((c[1] + 0.5) * RESOLUTION) + ORIGIN_X for c in frontier_cells]
+                    f_ys = [((c[0] + 0.5) * RESOLUTION) + ORIGIN_Y for c in frontier_cells]
+                    frontiers_scat.set_offsets(np.c_[f_xs, f_ys])
+                else:
+                    frontiers_scat.set_offsets(np.empty((0, 2)))
+
+                path_xs, path_ys = [], []
+
                 reachable_clusters = [c for c in frontier_clusters if c['reachable']]
                 if reachable_clusters:
-                    reachable_clusters.sort(key=lambda x: x['distance']) #go to closest cluster
-                    #reachable_clusters.sort(key=lambda x: x['size'], reverse=True) #go to largest cluster
+                    reachable_clusters.sort(key=lambda x: x['distance'])
                     best_goal = reachable_clusters[0]
                     
                     goal_row, goal_col = best_goal['center']
-                    goal_x = (goal_col * RESOLUTION) + ORIGIN_X
-                    goal_y = (goal_row * RESOLUTION) + ORIGIN_Y
-                    
-                    print(f"GRID: ({goal_row}, {goal_col}) | WORLD: ({goal_x:.2f}, {goal_y:.2f})")
+                    goal_x = (goal_col + 0.5) * RESOLUTION + ORIGIN_X
+                    goal_y = (goal_row + 0.5) * RESOLUTION + ORIGIN_Y
                     
                     path = exploration.plan_path(
                         occupancy_grid, 
@@ -332,19 +380,28 @@ if __name__ == "__main__":
                     )
                     
                     goal_cells = best_goal['cells']
-                    cluster_xs = [(cell[1] * RESOLUTION) + ORIGIN_X for cell in goal_cells]
-                    cluster_ys = [(cell[0] * RESOLUTION) + ORIGIN_Y for cell in goal_cells]
-                    
-                    plt.scatter(cluster_xs, cluster_ys, c='magenta', s=6, zorder=5)
-                    plt.scatter(goal_x, goal_y, c='yellow', marker='X', s=80, edgecolors='black', zorder=10)
+                    cluster_xs = [((cell[1] + 0.5) * RESOLUTION) + ORIGIN_X for cell in goal_cells]
+                    cluster_ys = [((cell[0] + 0.5) * RESOLUTION) + ORIGIN_Y for cell in goal_cells]
+                    selected_scat.set_offsets(np.c_[cluster_xs, cluster_ys])
+                    goal_scat.set_offsets(np.c_[[goal_x], [goal_y]])
                     
                     if path:
-                        path_xs = [(wp[1] * RESOLUTION) + ORIGIN_X for wp in path]
-                        path_ys = [(wp[0] * RESOLUTION) + ORIGIN_Y for wp in path]
-                        
-                        plt.plot(path_xs, path_ys, c='blue', linewidth=2, linestyle='-', zorder=7)
+                        path_xs = [((wp[1] + 0.5) * RESOLUTION) + ORIGIN_X for wp in path]
+                        path_ys = [((wp[0] + 0.5) * RESOLUTION) + ORIGIN_Y for wp in path]
+                else:
+                    selected_scat.set_offsets(np.empty((0, 2)))
+                    goal_scat.set_offsets(np.empty((0, 2)))
+
+                path_line.set_data(path_xs, path_ys)
+
+                if len(trajectory_points) > 0:
+                    traj_np = np.array(trajectory_points)
+                    trajectory_line.set_data(traj_np[:, 0], traj_np[:, 1])
                 
-                plt.pause(0.005)
+                robot_marker.set_offsets(np.c_[[robot_position[0]], [robot_position[1]]])
+                
+                fig.canvas.draw_idle()
+                plt.pause(0.001)
         trajectory_points.append(robot_position[:2].copy())
     
     #plot_grid(occupancy_grid, trajectory_points, ORIGIN_X, ORIGIN_Y)
