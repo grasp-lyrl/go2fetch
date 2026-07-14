@@ -2,6 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import numpy as np
 from collections import deque
+import cv2
 
 
 #outputs list of coordinates [(x,y),(x,y)...] each (x,y) being a frontier cell
@@ -128,6 +129,70 @@ def cluster_frontiers(grid_array, frontier_cells, robot_grid_cell, resolution=0.
         })
 
     return valid_clusters
+
+
+def cluster_frontiers_cv2(grid_array, frontier_cells, robot_grid_cell, resolution=0.05, radius_m=10.0, min_cluster_size=5):
+    rows, cols = grid_array.shape
+    r_robot, c_robot = robot_grid_cell
+    
+    radius_pixels = int(radius_m / resolution)
+    r_min = max(0, r_robot - radius_pixels)
+    r_max = min(rows, r_robot + radius_pixels + 1)
+    c_min = max(0, c_robot - radius_pixels)
+    c_max = min(cols, c_robot + radius_pixels + 1)
+
+    reachable_set = {robot_grid_cell}
+    queue = deque([robot_grid_cell]) 
+    dr_path = [-1, 1, 0, 0, -1, -1, 1, 1]
+    dc_path = [0, 0, -1, 1, -1, 1, -1, 1]
+    
+    while queue:
+        curr_r, curr_c = queue.popleft()
+        for i in range(8):
+            nr, nc = curr_r + dr_path[i], curr_c + dc_path[i]
+            if r_min <= nr < r_max and c_min <= nc < c_max:
+                if (nr, nc) not in reachable_set and grid_array[nr, nc] <= -8: 
+                    reachable_set.add((nr, nc))
+                    queue.append((nr, nc))
+
+    frontier_mask = np.zeros((rows, cols), dtype=np.uint8)
+    for r, c in frontier_cells:
+        frontier_mask[r, c] = 255
+        
+    contours, _ = cv2.findContours(frontier_mask, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
+    
+    valid_clusters = []
+    
+    for contour in contours:
+        cluster_cells = [(int(pt[0][1]), int(pt[0][0])) for pt in contour]
+        
+        cluster_size = len(cluster_cells)
+        if cluster_size < min_cluster_size: 
+            continue 
+            
+        M = cv2.moments(contour)
+        if M["m00"] != 0:
+            avg_col = int(M["m10"] / M["m00"])
+            avg_row = int(M["m01"] / M["m00"])
+        else:
+            avg_row = int(np.mean([cell[0] for cell in cluster_cells]))
+            avg_col = int(np.mean([cell[1] for cell in cluster_cells]))
+            
+        center_cell = min(cluster_cells, key=lambda c: (c[0] - avg_row)**2 + (c[1] - avg_col)**2)
+        
+        distance = np.sqrt((center_cell[0] - r_robot)**2 + (center_cell[1] - c_robot)**2)
+        reachable = center_cell in reachable_set
+        
+        valid_clusters.append({
+            'cells': cluster_cells,
+            'size': cluster_size,
+            'center': center_cell,
+            'distance': distance,
+            'reachable': reachable
+        })
+
+    return valid_clusters
+
 
 #outputs list of coordinates [(start_x, start_y)...(end_x, end_y)] of BFS path to goal cluster
 def plan_path(grid_array, start, goal, inflation_radius=3, resolution=0.05, radius_m=10.0):

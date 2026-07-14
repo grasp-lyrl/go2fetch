@@ -333,7 +333,7 @@ if __name__ == "__main__":
                     resolution=RESOLUTION
                 )
 
-                frontier_clusters = exploration.cluster_frontiers(
+                frontier_clusters = exploration.cluster_frontiers_cv2( #_cv2 for the opencv version, no cv2 for regular
                     occupancy_grid, 
                     frontier_cells, 
                     robot_grid_cell,
