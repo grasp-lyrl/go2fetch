@@ -332,6 +332,11 @@ if __name__ == "__main__":
             
             if len(rx_grid) > 0:
                 robot_grid_cell = (ry_grid[0], rx_grid[0]) 
+
+                reachable_set, parent_map, cost_map = exploration.compute_reachability(occupancy_grid,
+                robot_grid_cell,
+                resolution=RESOLUTION
+                )
                 
 
                 frontier_cells = exploration.detect_frontiers_cv2(
@@ -341,9 +346,10 @@ if __name__ == "__main__":
                 )
 
                 frontier_clusters = exploration.cluster_frontiers_cv2(
-                    occupancy_grid, 
-                    frontier_cells, 
-                    robot_grid_cell,
+                    occupancy_grid,
+                    frontier_cells,
+                    reachable_set,
+                    cost_map,
                     resolution=RESOLUTION
                 )
 
@@ -378,7 +384,7 @@ if __name__ == "__main__":
                         best_goal = reachable_clusters[0]
                     else:
                         max_size = max(c['size'] for c in reachable_clusters)
-                        max_dist = max(c['distance'] for c in reachable_clusters)
+                        max_dist = max(c['cost'] for c in reachable_clusters)
                         
                         highest_score = -1.0
                         w_size = 0.4
@@ -386,7 +392,7 @@ if __name__ == "__main__":
                         
                         for cluster in reachable_clusters:
                             norm_size = cluster['size'] / max_size if max_size > 0 else 0
-                            norm_dist = (max_dist - cluster['distance']) / max_dist if max_dist > 0 else 0                            
+                            norm_dist = (max_dist - cluster['cost']) / max_dist if max_dist > 0 else 0               
                             score = (w_size * norm_size) + (w_dist * norm_dist)
                             
                             if score > highest_score:
@@ -404,11 +410,12 @@ if __name__ == "__main__":
                     goal_y = (goal_row + 0.5) * RESOLUTION + ORIGIN_Y
                     
                     path = exploration.plan_path(
-                        occupancy_grid, 
-                        start=robot_grid_cell, 
+                        occupancy_grid,
                         goal=(goal_row, goal_col),
-                        inflation_radius=3  
+                        parent_map=parent_map,
+                        reachable_set=reachable_set
                     )
+
                     if best_goal is not None and not USE_CV2:
                         exploration.plot_mat(best_goal, goal_x, goal_y, path, path_xs, path_ys, trajectory_points, robot_position, RESOLUTION, ORIGIN_X, ORIGIN_Y, selected_scat, goal_scat, path_line, trajectory_line, robot_marker, occupancy_grid)
                     elif best_goal is not None and USE_CV2:

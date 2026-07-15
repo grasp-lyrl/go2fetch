@@ -66,143 +66,165 @@ def visualize_grid(grid_array, origin_x, origin_y, frontier_cells, resolution=0.
     plt.title("Exploration Pipeline: Frontier Detection")
 
 
-#outputs list of dictionaries containing attributes of frontier clusters
-def cluster_frontiers_cv2(grid_array, frontier_cells, robot_grid_cell, resolution=0.05, radius_m=10.0, min_cluster_size=5):
+def compute_reachability(grid_array, start, inflation_radius=0, resolution=0.05, radius_m=10.0):
     rows, cols = grid_array.shape
-    r_robot, c_robot = robot_grid_cell
-    
-    radius_pixels = int(radius_m / resolution)
-    r_min = max(0, r_robot - radius_pixels)
-    r_max = min(rows, r_robot + radius_pixels + 1)
-    c_min = max(0, c_robot - radius_pixels)
-    c_max = min(cols, c_robot + radius_pixels + 1)
+    r_start, c_start = start
 
-    reachable_set = {robot_grid_cell}
-    queue = deque([robot_grid_cell]) 
-    dr_path = [-1, 1, 0, 0, -1, -1, 1, 1]
-    dc_path = [0, 0, -1, 1, -1, 1, -1, 1]
-    
+    radius_pixels = int(radius_m / resolution)
+
+    r_min = max(0, r_start - radius_pixels)
+    r_max = min(rows, r_start + radius_pixels + 1)
+    c_min = max(0, c_start - radius_pixels)
+    c_max = min(cols, c_start + radius_pixels + 1)
+
+    blocked_mask = (grid_array >= 8)
+
+    if inflation_radius > 0:
+        inflated_mask = blocked_mask.copy()
+
+        wall_rows, wall_cols = np.where(grid_array >= 8)
+
+        for r_global, c_global in zip(wall_rows, wall_cols):
+            r_low = max(0, r_global - inflation_radius)
+            r_high = min(rows, r_global + inflation_radius + 1)
+            c_low = max(0, c_global - inflation_radius)
+            c_high = min(cols, c_global + inflation_radius + 1)
+
+            inflated_mask[r_low:r_high, c_low:c_high] = True
+    else:
+        inflated_mask = blocked_mask
+
+    inflated_mask[start[0], start[1]] = False
+
+    queue = deque([start])
+
+    parent_map = {start: None}
+    cost_map = {start: 0}
+    reachable_set = {start}
+
+    directions = [
+        (-1, 0), (1, 0),
+        (0, -1), (0, 1),
+        (-1, -1), (-1, 1),
+        (1, -1), (1, 1)
+    ]
+
     while queue:
-        curr_r, curr_c = queue.popleft()
-        for i in range(8):
-            nr, nc = curr_r + dr_path[i], curr_c + dc_path[i]
-            if r_min <= nr < r_max and c_min <= nc < c_max:
-                if (nr, nc) not in reachable_set and grid_array[nr, nc] <= -8: 
-                    reachable_set.add((nr, nc))
-                    queue.append((nr, nc))
+        current = queue.popleft()
+
+        for dr, dc in directions:
+            nr = current[0] + dr
+            nc = current[1] + dc
+
+            if not (r_min <= nr < r_max and c_min <= nc < c_max):
+                continue
+
+            if (nr, nc) in reachable_set:
+                continue
+
+            if grid_array[nr, nc] > -8:
+                continue
+
+            if inflated_mask[nr, nc]:
+                continue
+
+            if dr != 0 and dc != 0:
+                if grid_array[current[0] + dr, current[1]] > -8:
+                    continue
+                if grid_array[current[0], current[1] + dc] > -8:
+                    continue
+
+            neighbor = (nr, nc)
+
+            reachable_set.add(neighbor)
+            parent_map[neighbor] = current
+
+            if dr != 0 and dc != 0:
+                cost_map[neighbor] = cost_map[current] + 1.414
+            else:
+                cost_map[neighbor] = cost_map[current] + 1
+
+            queue.append(neighbor)
+
+    return reachable_set, parent_map, cost_map
+
+#outputs list of dictionaries containing attributes of frontier clusters
+def cluster_frontiers_cv2(grid_array, frontier_cells, reachable_set, cost_map, resolution=0.05, radius_m=10.0, min_cluster_size=5):
+
+    rows, cols = grid_array.shape
 
     frontier_mask = np.zeros((rows, cols), dtype=np.uint8)
+
     for r, c in frontier_cells:
         frontier_mask[r, c] = 255
-        
-    contours, _ = cv2.findContours(frontier_mask, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
-    
+
+    contours, _ = cv2.findContours(
+        frontier_mask,
+        cv2.RETR_LIST,
+        cv2.CHAIN_APPROX_NONE
+    )
+
     valid_clusters = []
-    
+
     for contour in contours:
-        cluster_cells = [(int(pt[0][1]), int(pt[0][0])) for pt in contour]
-        
-        cluster_size = len(cluster_cells)
-        if cluster_size < min_cluster_size: 
-            continue 
-            
+
+        cluster_cells = [
+            (int(pt[0][1]), int(pt[0][0]))
+            for pt in contour
+        ]
+
+        if len(cluster_cells) < min_cluster_size:
+            continue
+
+        reachable_cells = [
+            cell for cell in cluster_cells
+            if cell in reachable_set
+        ]
+
+        if not reachable_cells:
+            continue
+
         M = cv2.moments(contour)
+
         if M["m00"] != 0:
             avg_col = int(M["m10"] / M["m00"])
             avg_row = int(M["m01"] / M["m00"])
         else:
             avg_row = int(np.mean([cell[0] for cell in cluster_cells]))
             avg_col = int(np.mean([cell[1] for cell in cluster_cells]))
-            
-        center_cell = min(cluster_cells, key=lambda c: (c[0] - avg_row)**2 + (c[1] - avg_col)**2)
-        
-        distance = np.sqrt((center_cell[0] - r_robot)**2 + (center_cell[1] - c_robot)**2)
-        reachable = center_cell in reachable_set
-        
+
+        center_cell = min(
+            reachable_cells,
+            key=lambda c: (c[0] - avg_row)**2 + (c[1] - avg_col)**2
+        )
+
         valid_clusters.append({
             'cells': cluster_cells,
-            'size': cluster_size,
+            'size': len(cluster_cells),
             'center': center_cell,
-            'distance': distance,
-            'reachable': reachable
+            'distance': cost_map[center_cell],
+            'cost': cost_map[center_cell],
+            'reachable': True
         })
 
     return valid_clusters
 
-
 #outputs list of coordinates [(start_x, start_y)...(end_x, end_y)] of BFS path to goal cluster
-def plan_path(grid_array, start, goal, inflation_radius=3, resolution=0.05, radius_m=10.0):
+def plan_path(grid_array, goal, parent_map, reachable_set):
 
-    for current_radius in range(inflation_radius, -1, -1):
-        path = _plan_path_internal(grid_array, start, goal, current_radius, resolution, radius_m)
-        if path is not None:
-            return path
-            
-    return None 
+    if goal not in reachable_set:
+        return None
 
-def _plan_path_internal(grid_array, start, goal, inflation_radius, resolution, radius_m):
-    rows, cols = grid_array.shape
-    r_start, c_start = start
-    
-    radius_pixels = int(radius_m / resolution)
-    r_min = max(0, r_start - radius_pixels)
-    r_max = min(rows, r_start + radius_pixels + 1)
-    c_min = max(0, c_start - radius_pixels)
-    c_max = min(cols, c_start + radius_pixels + 1)
-    
-    blocked_mask = (grid_array >= 8)
-    inflated_mask = blocked_mask.copy()
-    
-    local_slice = grid_array[r_min:r_max, c_min:c_max]
-    wall_rows, wall_cols = np.where(local_slice >= 8)
-    
-    if inflation_radius > 0:
-        for r_local, c_local in zip(wall_rows, wall_cols):
-            r_global = r_local + r_min
-            c_global = c_local + c_min
-            
-            r_low = max(r_min, r_global - inflation_radius)
-            r_high = min(r_max, r_global + inflation_radius + 1)
-            c_low = max(c_min, c_global - inflation_radius)
-            c_high = min(c_max, c_global + inflation_radius + 1)
-            inflated_mask[r_low:r_high, c_low:c_high] = True
-
-    inflated_mask[start[0], start[1]] = False
-    inflated_mask[goal[0], goal[1]] = False
-
-    queue = [start]
-    parent_map = {start: None} 
-    visited = {start}
-    
-    directions = [(-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (-1, 1), (1, -1), (1, 1)]
-    
-    found = False
-    while queue:
-        current = queue.pop(0)
-        
-        if current == goal:
-            found = True
-            break
-            
-        for dr, dc in directions:
-            neighbor = (current[0] + dr, current[1] + dc)
-            
-            if r_min <= neighbor[0] < r_max and c_min <= neighbor[1] < c_max:
-                if neighbor not in visited and not inflated_mask[neighbor[0], neighbor[1]]:
-                    visited.add(neighbor)
-                    parent_map[neighbor] = current
-                    queue.append(neighbor)
-                    
-    if not found:
-        return None 
-        
     path = []
-    curr = goal
-    while curr is not None:
-        path.append(curr)
-        curr = parent_map[curr]
-        
-    path.reverse() 
+
+    current = goal
+
+    while current is not None:
+        path.append(current)
+        current = parent_map[current]
+
+    path.reverse()
+
     return path
 
 def plot_mat(best_goal, goal_x, goal_y, path, path_xs, path_ys, trajectory_points, robot_position, RESOLUTION, ORIGIN_X, ORIGIN_Y, selected_scat, goal_scat, path_line, trajectory_line, robot_marker, occupancy_grid):
