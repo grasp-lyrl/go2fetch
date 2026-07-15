@@ -333,34 +333,20 @@ if __name__ == "__main__":
             if len(rx_grid) > 0:
                 robot_grid_cell = (ry_grid[0], rx_grid[0]) 
                 
-                if USE_CV2:
-                    frontier_cells = exploration.detect_frontiers_cv2(
-                        occupancy_grid, 
-                        robot_grid_cell,
-                        resolution=RESOLUTION
-                    )
 
-                    frontier_clusters = exploration.cluster_frontiers_cv2(
-                        occupancy_grid, 
-                        frontier_cells, 
-                        robot_grid_cell,
-                        resolution=RESOLUTION
-                    )
+                frontier_cells = exploration.detect_frontiers_cv2(
+                    occupancy_grid, 
+                    robot_grid_cell,
+                    resolution=RESOLUTION
+                )
 
-                else:
-                    frontier_cells = exploration.detect_frontiers(
-                        occupancy_grid, 
-                        robot_grid_cell,
-                        resolution=RESOLUTION
-                    )
+                frontier_clusters = exploration.cluster_frontiers_cv2(
+                    occupancy_grid, 
+                    frontier_cells, 
+                    robot_grid_cell,
+                    resolution=RESOLUTION
+                )
 
-                    frontier_clusters = exploration.cluster_frontiers(
-                        occupancy_grid, 
-                        frontier_cells, 
-                        robot_grid_cell,
-                        resolution=RESOLUTION
-                    )
-                
                 if not USE_CV2:
                     if frontier_clusters:
                         all_c_xs = [((cl['center'][1] + 0.5) * RESOLUTION) + ORIGIN_X for cl in frontier_clusters]
@@ -424,7 +410,7 @@ if __name__ == "__main__":
                         inflation_radius=3  
                     )
                     if best_goal is not None and not USE_CV2:
-                        exploration.plot_mat(best_goal, goal_x, goal_y, path, path_xs, path_ys, trajectory_points, robot_position, RESOLUTION, ORIGIN_X, ORIGIN_Y, selected_scat, goal_scat, path_line, trajectory_line, robot_marker)
+                        exploration.plot_mat(best_goal, goal_x, goal_y, path, path_xs, path_ys, trajectory_points, robot_position, RESOLUTION, ORIGIN_X, ORIGIN_Y, selected_scat, goal_scat, path_line, trajectory_line, robot_marker, occupancy_grid)
                     elif best_goal is not None and USE_CV2:
                         exploration.plot_cv2(best_goal, goal_x, goal_y, path, trajectory_points, robot_position, RESOLUTION, ORIGIN_X, ORIGIN_Y, frontier_cells, frontier_clusters, occupancy_grid)
                     else:

@@ -3,36 +3,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 from collections import deque
 import cv2
+from matplotlib.patches import Rectangle
 
 
 #outputs list of coordinates [(x,y),(x,y)...] each (x,y) being a frontier cell
-def detect_frontiers(grid_array, robot_grid_cell, resolution=0.05, radius_m=10.0):
-    frontier_cells = set()
-    rows, cols = grid_array.shape
-    r_robot, c_robot = robot_grid_cell
-    
-    radius_pixels = int(radius_m / resolution)
-    r_min = max(0, r_robot - radius_pixels)
-    r_max = min(rows, r_robot + radius_pixels + 1)
-    c_min = max(0, c_robot - radius_pixels)
-    c_max = min(cols, c_robot + radius_pixels + 1)
-    
-    dr = [-1, 1, 0, 0] 
-    dc = [0, 0, -1, 1]
-    
-    for r in range(r_min, r_max):
-        for c in range(c_min, c_max):
-            if grid_array[r, c] <= -8:
-                for i in range(4):
-                    nr, nc = r + dr[i], c + dc[i]
-                    if 0 <= nr < rows and 0 <= nc < cols:
-                        if -8 < grid_array[nr, nc] < 8:
-                            frontier_cells.add((r, c))
-                            break 
-                            
-    return frontier_cells
-
-
 def detect_frontiers_cv2(grid_array, robot_grid_cell, resolution=0.05, radius_m=10.0):
     rows, cols = grid_array.shape
     r_robot, c_robot = robot_grid_cell
@@ -93,74 +67,6 @@ def visualize_grid(grid_array, origin_x, origin_y, frontier_cells, resolution=0.
 
 
 #outputs list of dictionaries containing attributes of frontier clusters
-def cluster_frontiers(grid_array, frontier_cells, robot_grid_cell, resolution=0.05, radius_m=10.0, min_cluster_size=5):
-
-    rows, cols = grid_array.shape
-    r_robot, c_robot = robot_grid_cell
-    
-    radius_pixels = int(radius_m / resolution)
-    r_min = max(0, r_robot - radius_pixels)
-    r_max = min(rows, r_robot + radius_pixels + 1)
-    c_min = max(0, c_robot - radius_pixels)
-    c_max = min(cols, c_robot + radius_pixels + 1)
-
-    reachable_set = {robot_grid_cell}
-    queue = deque([robot_grid_cell]) 
-    
-    dr_path = [-1, 1, 0, 0, -1, -1, 1, 1]
-    dc_path = [0, 0, -1, 1, -1, 1, -1, 1]
-    
-    while queue:
-        curr_r, curr_c = queue.popleft()
-        for i in range(8):
-            nr, nc = curr_r + dr_path[i], curr_c + dc_path[i]
-            if r_min <= nr < r_max and c_min <= nc < c_max:
-                if (nr, nc) not in reachable_set and grid_array[nr, nc] <= -8: 
-                    reachable_set.add((nr, nc))
-                    queue.append((nr, nc))
-
-    unvisited = set(frontier_cells)
-    valid_clusters = []
-    dr_8 = [-1, -1, -1, 0, 0, 1, 1, 1]
-    dc_8 = [-1, 0, 1, -1, 1, -1, 0, 1]
-    
-    while unvisited:
-        start_cell = unvisited.pop()
-        current_cluster = [start_cell]
-        q = deque([start_cell])
-        
-        while q:
-            curr_r, curr_c = q.popleft() 
-            for i in range(8):
-                neighbor = (curr_r + dr_8[i], curr_c + dc_8[i])
-                if neighbor in unvisited:
-                    unvisited.remove(neighbor)
-                    current_cluster.append(neighbor)
-                    q.append(neighbor)
-                    
-        cluster_size = len(current_cluster)
-        if cluster_size < min_cluster_size: 
-            continue 
-            
-        avg_row = int(np.mean([cell[0] for cell in current_cluster]))
-        avg_col = int(np.mean([cell[1] for cell in current_cluster]))
-        center_cell = min(current_cluster, key=lambda c: (c[0] - avg_row)**2 + (c[1] - avg_col)**2)
-        
-        distance = np.sqrt((center_cell[0] - r_robot)**2 + (center_cell[1] - c_robot)**2)
-        
-        reachable = center_cell in reachable_set
-        
-        valid_clusters.append({
-            'cells': current_cluster,
-            'size': cluster_size,
-            'center': center_cell,
-            'distance': distance,
-            'reachable': reachable
-        })
-
-    return valid_clusters
-
-
 def cluster_frontiers_cv2(grid_array, frontier_cells, robot_grid_cell, resolution=0.05, radius_m=10.0, min_cluster_size=5):
     rows, cols = grid_array.shape
     r_robot, c_robot = robot_grid_cell
@@ -299,7 +205,7 @@ def _plan_path_internal(grid_array, start, goal, inflation_radius, resolution, r
     path.reverse() 
     return path
 
-def plot_mat(best_goal, goal_x, goal_y, path, path_xs, path_ys, trajectory_points, robot_position, RESOLUTION, ORIGIN_X, ORIGIN_Y, selected_scat, goal_scat, path_line, trajectory_line, robot_marker):
+def plot_mat(best_goal, goal_x, goal_y, path, path_xs, path_ys, trajectory_points, robot_position, RESOLUTION, ORIGIN_X, ORIGIN_Y, selected_scat, goal_scat, path_line, trajectory_line, robot_marker, occupancy_grid):
     goal_cells = best_goal['cells']
     cluster_xs = [((cell[1] + 0.5) * RESOLUTION) + ORIGIN_X for cell in goal_cells]
     cluster_ys = [((cell[0] + 0.5) * RESOLUTION) + ORIGIN_Y for cell in goal_cells]
@@ -309,13 +215,36 @@ def plot_mat(best_goal, goal_x, goal_y, path, path_xs, path_ys, trajectory_point
     if path:
         path_xs = [((wp[1] + 0.5) * RESOLUTION) + ORIGIN_X for wp in path]
         path_ys = [((wp[0] + 0.5) * RESOLUTION) + ORIGIN_Y for wp in path]
-
     path_line.set_data(path_xs, path_ys)
 
     if len(trajectory_points) > 0:
         traj_np = np.array(trajectory_points)
         trajectory_line.set_data(traj_np[:, 0], traj_np[:, 1])
     
+    robot_marker.set_offsets(np.c_[[robot_position[0]], [robot_position[1]]])
+
+    ax = robot_marker.axes
+    box_width = 20.0
+    box_height = 20.0
+    rect_x = robot_position[0] - (box_width / 2.0)
+    rect_y = robot_position[1] - (box_height / 2.0)
+
+    if not hasattr(ax, 'bounds_rect'):
+        ax.bounds_rect = Rectangle(
+            (rect_x, rect_y), box_width, box_height, 
+            linewidth=1.5, edgecolor='red', facecolor='none', linestyle='--', zorder=10
+        )
+        ax.add_patch(ax.bounds_rect)
+    else:
+        ax.bounds_rect.set_xy((rect_x, rect_y))
+
+    if len(trajectory_points) > 0:
+        traj_np = np.array(trajectory_points)
+        dynamic_min_x = np.min(traj_np[:, 0]) - 1.5
+    else:
+        dynamic_min_x = -1.5
+
+    ax.set_xlim(dynamic_min_x, ORIGIN_X + (occupancy_grid.shape[1] * RESOLUTION))
 
 def plot_cv2(best_goal, goal_x, goal_y, path, trajectory_points, robot_position, RESOLUTION, ORIGIN_X, ORIGIN_Y, frontier_cells, frontier_clusters, occupancy_grid):
 
@@ -377,6 +306,30 @@ def plot_cv2(best_goal, goal_x, goal_y, path, trajectory_points, robot_position,
             cv2.line(display_img, (c1, r1), (c2, r2), (255, 0, 0), 2) 
     rc, rr = world_to_grid_pixel(robot_position[0], robot_position[1])
     cv2.rectangle(display_img, (rc - 3, rr - 3), (rc + 3, rr + 3), (200, 0, 0), -1)
+
+    min_x, max_x = robot_position[0] - 10.0, robot_position[0] + 10.0
+    min_y, max_y = robot_position[1] - 10.0, robot_position[1] + 10.0
+    c_min, r_min = world_to_grid_pixel(min_x, min_y)
+    c_max, r_max = world_to_grid_pixel(max_x, max_y)
+
+    def draw_dashed_line(img, pt1, pt2, color, thickness=1, dash_len=4, gap_len=4):
+        dx, dy = pt2[0] - pt1[0], pt2[1] - pt1[1]
+        dist = np.sqrt(dx**2 + dy**2)
+        if dist == 0: return
+        ux, uy = dx / dist, dy / dist
+        step = dash_len + gap_len
+        for i in range(0, int(dist), step):
+            start_dist = i
+            end_dist = min(i + dash_len, dist)
+            p1 = (int(pt1[0] + start_dist * ux), int(pt1[1] + start_dist * uy))
+            p2 = (int(pt1[0] + end_dist * ux), int(pt1[1] + end_dist * uy))
+            cv2.line(img, p1, p2, color, thickness)
+
+    red_bgr = (0, 0, 255)
+    draw_dashed_line(display_img, (c_min, r_min), (c_max, r_min), red_bgr, 1)
+    draw_dashed_line(display_img, (c_max, r_min), (c_max, r_max), red_bgr, 1)
+    draw_dashed_line(display_img, (c_max, r_max), (c_min, r_max), red_bgr, 1)
+    draw_dashed_line(display_img, (c_min, r_max), (c_min, r_min), red_bgr, 1)
 
     flipped_display = cv2.flip(display_img, 0)
 
