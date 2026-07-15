@@ -236,6 +236,8 @@ def plot_grid(grid, trajectory_points, origin_x, origin_y):
 
 if __name__ == "__main__":
 
+    USE_CV2 = False
+
     occupancy_grid = create_grid()
 
     lidar_stream = get_lidar_points("logs/levine.rrd")
@@ -253,30 +255,34 @@ if __name__ == "__main__":
     trajectory_points = []
     frame_count = 0
 
-    plt.ion()  
-    fig, ax = plt.subplots(figsize=(8, 8))
-
-    x_min, x_max = ORIGIN_X, ORIGIN_X + (MAP_WIDTH * RESOLUTION)
-    y_min, y_max = ORIGIN_Y, ORIGIN_Y + (MAP_HEIGHT * RESOLUTION)
-
-    display_img = np.zeros((MAP_HEIGHT, MAP_WIDTH, 3), dtype=np.uint8)
-    im_artist = ax.imshow(display_img, origin="lower", extent=[x_min, x_max, y_min, y_max])
-
-    frontiers_scat = ax.scatter([], [], c='cyan', s=2, label='Frontiers', zorder=2)
-    all_centers_scat = ax.scatter([], [], c='orange', marker='o', s=10, edgecolors='black', label='All Cluster Centers', zorder=3)
-    selected_scat = ax.scatter([], [], c='magenta', s=6, label='Selected Goal Cluster', zorder=4)
-    goal_scat = ax.scatter([], [], c='yellow', marker='X', s=25, edgecolors='black', label='Goal Centroid', zorder=6)
-
-    trajectory_line, = ax.plot([], [], c='blue', linewidth=1.0, alpha=0.7, zorder=3, label='Traveled Path')
-    path_line, = ax.plot([], [], c='blue', linewidth=2, zorder=5, label='Planned Path')
-
-    robot_marker = ax.scatter([], [], c='blue', marker='s', s=20, label='Robot', zorder=11)
-
-    ax.set_xlabel("X (meters)")
-    ax.set_ylabel("Y (meters)")
-    ax.set_title("Exploration Pipeline: High-Performance Persistent BFS")
-    ax.legend(loc='upper right')
-    
+    if not USE_CV2:
+        plt.ion()
+        fig, ax = plt.subplots(figsize=(8, 8))
+        
+        ax.set_xlim(ORIGIN_X, ORIGIN_X + (MAP_WIDTH * RESOLUTION))
+        ax.set_ylim(ORIGIN_Y, ORIGIN_Y + (MAP_HEIGHT * RESOLUTION))
+        
+        display_img = np.zeros((MAP_HEIGHT, MAP_WIDTH, 3), dtype=np.uint8)
+        im_artist = ax.imshow(display_img, origin="lower", extent=[ORIGIN_X, ORIGIN_X + (MAP_WIDTH * RESOLUTION), ORIGIN_Y, ORIGIN_Y + (MAP_HEIGHT * RESOLUTION)])
+        
+        frontiers_scat = ax.scatter([], [], c='cyan', s=2, label='Frontiers', zorder=2)
+        all_centers_scat = ax.scatter([], [], c='orange', marker='o', s=10, edgecolors='black', label='All Cluster Centers', zorder=3)
+        selected_scat = ax.scatter([], [], c='magenta', s=6, label='Selected Goal Cluster', zorder=4)
+        goal_scat = ax.scatter([], [], c='yellow', marker='X', s=25, edgecolors='black', label='Goal Centroid', zorder=6)
+        
+        trajectory_line, = ax.plot([], [], c='blue', linewidth=1.0, alpha=0.7, zorder=3, label='Traveled Path')
+        path_line, = ax.plot([], [], c='blue', linewidth=2, zorder=5, label='Planned Path')
+        robot_marker = ax.scatter([], [], c='blue', marker='s', s=20, label='Robot', zorder=11)
+        
+        ax.set_xlabel("X (meters)")
+        ax.set_ylabel("Y (meters)")
+        ax.set_title("Exploration Pipeline: High-Performance Persistent BFS")
+        ax.legend(loc='upper right')
+    else:
+        fig = ax = im_artist = None
+        frontiers_scat = all_centers_scat = selected_scat = goal_scat = None
+        trajectory_line = path_line = robot_marker = None
+        
     for t_lidar, lidar_points in lidar_stream:
 
         if previous_lidar_time is not None:
@@ -327,38 +333,54 @@ if __name__ == "__main__":
             if len(rx_grid) > 0:
                 robot_grid_cell = (ry_grid[0], rx_grid[0]) 
                 
-                frontier_cells = exploration.detect_frontiers_cv2(
-                    occupancy_grid, 
-                    robot_grid_cell,
-                    resolution=RESOLUTION
-                )
+                if USE_CV2:
+                    frontier_cells = exploration.detect_frontiers_cv2(
+                        occupancy_grid, 
+                        robot_grid_cell,
+                        resolution=RESOLUTION
+                    )
 
-                frontier_clusters = exploration.cluster_frontiers_cv2(
-                    occupancy_grid, 
-                    frontier_cells, 
-                    robot_grid_cell,
-                    resolution=RESOLUTION
-                )
+                    frontier_clusters = exploration.cluster_frontiers_cv2(
+                        occupancy_grid, 
+                        frontier_cells, 
+                        robot_grid_cell,
+                        resolution=RESOLUTION
+                    )
 
-                if frontier_clusters:
-                    all_c_xs = [((cl['center'][1] + 0.5) * RESOLUTION) + ORIGIN_X for cl in frontier_clusters]
-                    all_c_ys = [((cl['center'][0] + 0.5) * RESOLUTION) + ORIGIN_Y for cl in frontier_clusters]
-                    all_centers_scat.set_offsets(np.c_[all_c_xs, all_c_ys])
                 else:
-                    all_centers_scat.set_offsets(np.empty((0, 2)))
+                    frontier_cells = exploration.detect_frontiers(
+                        occupancy_grid, 
+                        robot_grid_cell,
+                        resolution=RESOLUTION
+                    )
 
-                grid_color = np.zeros((occupancy_grid.shape[0], occupancy_grid.shape[1], 3), dtype=np.uint8)
-                grid_color[occupancy_grid >= 8] = [0, 0, 0]        
-                grid_color[occupancy_grid <= -8] = [255, 255, 255] 
-                grid_color[(occupancy_grid > -8) & (occupancy_grid < 8)] = [147, 147, 147] 
-                im_artist.set_data(grid_color)
+                    frontier_clusters = exploration.cluster_frontiers(
+                        occupancy_grid, 
+                        frontier_cells, 
+                        robot_grid_cell,
+                        resolution=RESOLUTION
+                    )
                 
-                if frontier_cells:
-                    f_xs = [((c[1] + 0.5) * RESOLUTION) + ORIGIN_X for c in frontier_cells]
-                    f_ys = [((c[0] + 0.5) * RESOLUTION) + ORIGIN_Y for c in frontier_cells]
-                    frontiers_scat.set_offsets(np.c_[f_xs, f_ys])
-                else:
-                    frontiers_scat.set_offsets(np.empty((0, 2)))
+                if not USE_CV2:
+                    if frontier_clusters:
+                        all_c_xs = [((cl['center'][1] + 0.5) * RESOLUTION) + ORIGIN_X for cl in frontier_clusters]
+                        all_c_ys = [((cl['center'][0] + 0.5) * RESOLUTION) + ORIGIN_Y for cl in frontier_clusters]
+                        all_centers_scat.set_offsets(np.c_[all_c_xs, all_c_ys])
+                    else:
+                        all_centers_scat.set_offsets(np.empty((0, 2)))
+
+                    grid_color = np.zeros((occupancy_grid.shape[0], occupancy_grid.shape[1], 3), dtype=np.uint8)
+                    grid_color[occupancy_grid >= 8] = [0, 0, 0]        
+                    grid_color[occupancy_grid <= -8] = [255, 255, 255] 
+                    grid_color[(occupancy_grid > -8) & (occupancy_grid < 8)] = [147, 147, 147] 
+                    im_artist.set_data(grid_color)
+                    
+                    if frontier_cells:
+                        f_xs = [((c[1] + 0.5) * RESOLUTION) + ORIGIN_X for c in frontier_cells]
+                        f_ys = [((c[0] + 0.5) * RESOLUTION) + ORIGIN_Y for c in frontier_cells]
+                        frontiers_scat.set_offsets(np.c_[f_xs, f_ys])
+                    else:
+                        frontiers_scat.set_offsets(np.empty((0, 2)))
 
                 path_xs, path_ys = [], []
                 
@@ -401,28 +423,20 @@ if __name__ == "__main__":
                         goal=(goal_row, goal_col),
                         inflation_radius=3  
                     )
-                    
-                    goal_cells = best_goal['cells']
-                    cluster_xs = [((cell[1] + 0.5) * RESOLUTION) + ORIGIN_X for cell in goal_cells]
-                    cluster_ys = [((cell[0] + 0.5) * RESOLUTION) + ORIGIN_Y for cell in goal_cells]
-                    selected_scat.set_offsets(np.c_[cluster_xs, cluster_ys])
-                    goal_scat.set_offsets(np.c_[[goal_x], [goal_y]])
-                    
-                    if path:
-                        path_xs = [((wp[1] + 0.5) * RESOLUTION) + ORIGIN_X for wp in path]
-                        path_ys = [((wp[0] + 0.5) * RESOLUTION) + ORIGIN_Y for wp in path]
+                    if best_goal is not None and not USE_CV2:
+                        exploration.plot_mat(best_goal, goal_x, goal_y, path, path_xs, path_ys, trajectory_points, robot_position, RESOLUTION, ORIGIN_X, ORIGIN_Y, selected_scat, goal_scat, path_line, trajectory_line, robot_marker)
+                    elif best_goal is not None and USE_CV2:
+                        exploration.plot_cv2(best_goal, goal_x, goal_y, path, trajectory_points, robot_position, RESOLUTION, ORIGIN_X, ORIGIN_Y, frontier_cells, frontier_clusters, occupancy_grid)
+                    else:
+                        selected_scat.set_offsets(np.empty((0, 2)))
+                        goal_scat.set_offsets(np.empty((0, 2)))
+                        path_line.set_data([], [])
+                
+                if not USE_CV2:
+                    robot_marker.set_offsets(np.c_[[robot_position[0]], [robot_position[1]]])
+                    fig.canvas.draw_idle()
+                    plt.pause(0.001)
 
-                path_line.set_data(path_xs, path_ys)
-
- 
-        if len(trajectory_points) > 0:
-            traj_np = np.array(trajectory_points)
-            trajectory_line.set_data(traj_np[:, 0], traj_np[:, 1])
-        
-        robot_marker.set_offsets(np.c_[[robot_position[0]], [robot_position[1]]])
-        
-        fig.canvas.draw_idle()
-        plt.pause(0.001)
-
+        trajectory_points.append(robot_position[:2].copy())
     
     #plot_grid(occupancy_grid, trajectory_points, ORIGIN_X, ORIGIN_Y)

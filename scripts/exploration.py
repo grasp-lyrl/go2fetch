@@ -298,3 +298,87 @@ def _plan_path_internal(grid_array, start, goal, inflation_radius, resolution, r
         
     path.reverse() 
     return path
+
+def plot_mat(best_goal, goal_x, goal_y, path, path_xs, path_ys, trajectory_points, robot_position, RESOLUTION, ORIGIN_X, ORIGIN_Y, selected_scat, goal_scat, path_line, trajectory_line, robot_marker):
+    goal_cells = best_goal['cells']
+    cluster_xs = [((cell[1] + 0.5) * RESOLUTION) + ORIGIN_X for cell in goal_cells]
+    cluster_ys = [((cell[0] + 0.5) * RESOLUTION) + ORIGIN_Y for cell in goal_cells]
+    selected_scat.set_offsets(np.c_[cluster_xs, cluster_ys])
+    goal_scat.set_offsets(np.c_[[goal_x], [goal_y]])
+    
+    if path:
+        path_xs = [((wp[1] + 0.5) * RESOLUTION) + ORIGIN_X for wp in path]
+        path_ys = [((wp[0] + 0.5) * RESOLUTION) + ORIGIN_Y for wp in path]
+
+    path_line.set_data(path_xs, path_ys)
+
+    if len(trajectory_points) > 0:
+        traj_np = np.array(trajectory_points)
+        trajectory_line.set_data(traj_np[:, 0], traj_np[:, 1])
+    
+
+def plot_cv2(best_goal, goal_x, goal_y, path, trajectory_points, robot_position, RESOLUTION, ORIGIN_X, ORIGIN_Y, frontier_cells, frontier_clusters, occupancy_grid):
+
+    WINDOW_NAME = "Exploration Pipeline - OpenCV Live View"
+
+    grid = occupancy_grid 
+    raw_frontiers = frontier_cells
+    clusters = frontier_clusters
+    
+    grid_color = np.zeros((grid.shape[0], grid.shape[1], 3), dtype=np.uint8)
+    grid_color[grid >= 8] = [0, 0, 0]  
+    grid_color[grid <= -8] = [255, 255, 255]   
+    grid_color[(grid > -8) & (grid < 8)] = [147, 147, 147] 
+
+    display_img = grid_color.copy()
+
+    def world_to_grid_pixel(x, y):
+        col = int((x - ORIGIN_X) / RESOLUTION)
+        row = int((y - ORIGIN_Y) / RESOLUTION)
+        return col, row
+
+    if len(trajectory_points) > 1:
+        for i in range(len(trajectory_points) - 1):
+            pt1 = trajectory_points[i]
+            pt2 = trajectory_points[i+1]
+            c1, r1 = world_to_grid_pixel(pt1[0], pt1[1])
+            c2, r2 = world_to_grid_pixel(pt2[0], pt2[1])
+            cv2.line(display_img, (c1, r1), (c2, r2), (180, 50, 50), 1)
+
+    if raw_frontiers:
+        for cell in raw_frontiers:
+            r, c = cell
+            display_img[r, c] = [255, 255, 0] 
+
+    if clusters:
+        for cl in clusters:
+            cr, cc = cl['center']
+            cv2.circle(display_img, (cc, cr), 2, (0, 140, 255), -1) 
+
+    if best_goal is not None:
+        for cell in best_goal['cells']:
+            r, c = cell
+            display_img[r, c] = [255, 0, 255] 
+
+
+        if goal_x is not None and goal_y is not None:
+            gc, gr = world_to_grid_pixel(goal_x, goal_y)
+            
+            cv2.line(display_img, (gc - 5, gr - 5), (gc + 5, gr + 5), (0, 0, 0), 4)
+            cv2.line(display_img, (gc - 5, gr + 5), (gc + 5, gr - 5), (0, 0, 0), 4)
+            
+            cv2.line(display_img, (gc - 4, gr - 4), (gc + 4, gr + 4), (0, 255, 255), 2)
+            cv2.line(display_img, (gc - 4, gr + 4), (gc + 4, gr - 4), (0, 255, 255), 2)
+
+    if path and len(path) > 1:
+        for i in range(len(path) - 1):
+            r1, c1 = path[i]
+            r2, c2 = path[i+1]
+            cv2.line(display_img, (c1, r1), (c2, r2), (255, 0, 0), 2) 
+    rc, rr = world_to_grid_pixel(robot_position[0], robot_position[1])
+    cv2.rectangle(display_img, (rc - 3, rr - 3), (rc + 3, rr + 3), (200, 0, 0), -1)
+
+    flipped_display = cv2.flip(display_img, 0)
+
+    cv2.imshow(WINDOW_NAME, flipped_display)
+    cv2.waitKey(1)
