@@ -236,7 +236,8 @@ def plot_grid(grid, trajectory_points, origin_x, origin_y):
 
 if __name__ == "__main__":
 
-    USE_CV2 = False
+    USE_CV2 = True
+    REALTIME_REPLAY = True
 
     occupancy_grid = create_grid()
 
@@ -285,7 +286,7 @@ if __name__ == "__main__":
         
     for t_lidar, lidar_points in lidar_stream:
 
-        if previous_lidar_time is not None:
+        if REALTIME_REPLAY and previous_lidar_time is not None:
             dt = (t_lidar - previous_lidar_time) / 1000.0
             time.sleep(dt)
 

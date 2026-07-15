@@ -10,30 +10,31 @@ from matplotlib.patches import Rectangle
 def detect_frontiers_cv2(grid_array, robot_grid_cell, resolution=0.05, radius_m=10.0):
     rows, cols = grid_array.shape
     r_robot, c_robot = robot_grid_cell
-    
-    explored_mask = np.where((grid_array <= -8) | (grid_array >= 8), 255, 0).astype(np.uint8)
-    
-    contours, _ = cv2.findContours(explored_mask, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
-    
-    frontier_cells = set()
+
     radius_pixels = int(radius_m / resolution)
-    
-    r_min, r_max = r_robot - radius_pixels, r_robot + radius_pixels
-    c_min, c_max = c_robot - radius_pixels, c_robot + radius_pixels
+    r_min = max(0, r_robot - radius_pixels)
+    r_max = min(rows, r_robot + radius_pixels + 1)
+    c_min = max(0, c_robot - radius_pixels)
+    c_max = min(cols, c_robot + radius_pixels + 1)
+
+    roi = grid_array[r_min:r_max, c_min:c_max]
+    explored_mask = np.where((roi <= -8) | (roi >= 8), 255, 0).astype(np.uint8)
+
+    contours, _ = cv2.findContours(explored_mask, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
+
+    frontier_cells = set()
 
     for contour in contours:
         for pt in contour:
-            c, r = int(pt[0][0]), int(pt[0][1]) 
-            
-            if not (r_min <= r <= r_max and c_min <= c <= c_max):
-                continue
-                
+            c_local, r_local = int(pt[0][0]), int(pt[0][1])
+            r, c = r_local + r_min, c_local + c_min
+
             if grid_array[r, c] >= 8:
                 continue
-                
+
             if grid_array[r, c] <= -8:
                 frontier_cells.add((r, c))
-                
+
     return frontier_cells
 
 
@@ -151,12 +152,18 @@ def compute_reachability(grid_array, start, inflation_radius=0, resolution=0.05,
 #outputs list of dictionaries containing attributes of frontier clusters
 def cluster_frontiers_cv2(grid_array, frontier_cells, reachable_set, cost_map, resolution=0.05, radius_m=10.0, min_cluster_size=5):
 
-    rows, cols = grid_array.shape
+    if not frontier_cells:
+        return []
 
-    frontier_mask = np.zeros((rows, cols), dtype=np.uint8)
+    rs = [r for r, _ in frontier_cells]
+    cs = [c for _, c in frontier_cells]
+    r_min, r_max = min(rs), max(rs)
+    c_min, c_max = min(cs), max(cs)
+
+    frontier_mask = np.zeros((r_max - r_min + 1, c_max - c_min + 1), dtype=np.uint8)
 
     for r, c in frontier_cells:
-        frontier_mask[r, c] = 255
+        frontier_mask[r - r_min, c - c_min] = 255
 
     contours, _ = cv2.findContours(
         frontier_mask,
@@ -169,7 +176,7 @@ def cluster_frontiers_cv2(grid_array, frontier_cells, reachable_set, cost_map, r
     for contour in contours:
 
         cluster_cells = [
-            (int(pt[0][1]), int(pt[0][0]))
+            (int(pt[0][1]) + r_min, int(pt[0][0]) + c_min)
             for pt in contour
         ]
 
@@ -187,8 +194,8 @@ def cluster_frontiers_cv2(grid_array, frontier_cells, reachable_set, cost_map, r
         M = cv2.moments(contour)
 
         if M["m00"] != 0:
-            avg_col = int(M["m10"] / M["m00"])
-            avg_row = int(M["m01"] / M["m00"])
+            avg_col = int(M["m10"] / M["m00"]) + c_min
+            avg_row = int(M["m01"] / M["m00"]) + r_min
         else:
             avg_row = int(np.mean([cell[0] for cell in cluster_cells]))
             avg_col = int(np.mean([cell[1] for cell in cluster_cells]))
