@@ -6,6 +6,8 @@ from examples.read_lidar_rrd import get_lidar_points
 from examples.read_state_rrd import get_state_stream
 from scripts import exploration
 
+from go2_interface.lidar import make_lidar_reader, pointcloud_to_xyz
+from go2_interface.state import make_state_reader
 RESOLUTION = 0.05        
 MAP_WIDTH = 2000     
 MAP_HEIGHT = 1000
@@ -237,74 +239,189 @@ def plot_grid(grid, trajectory_points, origin_x, origin_y):
 if __name__ == "__main__":
 
     USE_CV2 = True
-    REALTIME_REPLAY = True
+    REALTIME_REPLAY = False
 
     occupancy_grid = create_grid()
 
-    lidar_stream = get_lidar_points("logs/levine.rrd")
+    # lidar_stream = get_lidar_points("logs/levine.rrd")
 
-    state_stream = get_state_stream("logs/levine.rrd")
-    state_iter = iter(state_stream)
+    # state_stream = get_state_stream("logs/levine.rrd")
+    # state_iter = iter(state_stream)
 
-    t_prev, pos_prev, rpy_prev = next(state_iter)
-    t_next, pos_next, rpy_next = next(state_iter)
+    # t_prev, pos_prev, rpy_prev = next(state_iter)
+    # t_next, pos_next, rpy_next = next(state_iter)
 
-    ORIGIN_X = pos_prev[0] - (MAP_WIDTH * RESOLUTION) / 2.0
-    ORIGIN_Y = pos_prev[1] - (MAP_HEIGHT * RESOLUTION) / 2.0
+    get_lidar = make_lidar_reader("en7")
+    get_state = make_state_reader("en7")
+
+    state_msg = None
+
+    while state_msg is None:
+        state_msg = get_state()
+
+    initial_position = np.array(state_msg.position)
+
+    # ORIGIN_X = pos_prev[0] - (MAP_WIDTH * RESOLUTION) / 2.0
+    # ORIGIN_Y = pos_prev[1] - (MAP_HEIGHT * RESOLUTION) / 2.0
+
+    ORIGIN_X = initial_position[0] - (MAP_WIDTH * RESOLUTION) / 2.0
+    ORIGIN_Y = initial_position[1] - (MAP_HEIGHT * RESOLUTION) / 2.0
+
 
     previous_lidar_time = None
     trajectory_points = []
     frame_count = 0
 
+
     if not USE_CV2:
+
         plt.ion()
         fig, ax = plt.subplots(figsize=(8, 8))
         
-        ax.set_xlim(ORIGIN_X, ORIGIN_X + (MAP_WIDTH * RESOLUTION))
-        ax.set_ylim(ORIGIN_Y, ORIGIN_Y + (MAP_HEIGHT * RESOLUTION))
+        ax.set_xlim(
+            ORIGIN_X,
+            ORIGIN_X + (MAP_WIDTH * RESOLUTION)
+        )
+
+        ax.set_ylim(
+            ORIGIN_Y,
+            ORIGIN_Y + (MAP_HEIGHT * RESOLUTION)
+        )
         
-        display_img = np.zeros((MAP_HEIGHT, MAP_WIDTH, 3), dtype=np.uint8)
-        im_artist = ax.imshow(display_img, origin="lower", extent=[ORIGIN_X, ORIGIN_X + (MAP_WIDTH * RESOLUTION), ORIGIN_Y, ORIGIN_Y + (MAP_HEIGHT * RESOLUTION)])
+        display_img = np.zeros(
+            (MAP_HEIGHT, MAP_WIDTH, 3),
+            dtype=np.uint8
+        )
+
+        im_artist = ax.imshow(
+            display_img,
+            origin="lower",
+            extent=[
+                ORIGIN_X,
+                ORIGIN_X + (MAP_WIDTH * RESOLUTION),
+                ORIGIN_Y,
+                ORIGIN_Y + (MAP_HEIGHT * RESOLUTION)
+            ]
+        )
         
-        frontiers_scat = ax.scatter([], [], c='cyan', s=2, label='Frontiers', zorder=2)
-        all_centers_scat = ax.scatter([], [], c='orange', marker='o', s=10, edgecolors='black', label='All Cluster Centers', zorder=3)
-        selected_scat = ax.scatter([], [], c='magenta', s=6, label='Selected Goal Cluster', zorder=4)
-        goal_scat = ax.scatter([], [], c='yellow', marker='X', s=25, edgecolors='black', label='Goal Centroid', zorder=6)
+        frontiers_scat = ax.scatter(
+            [], [],
+            c='cyan',
+            s=2,
+            label='Frontiers',
+            zorder=2
+        )
+
+        all_centers_scat = ax.scatter(
+            [],
+            [],
+            c='orange',
+            marker='o',
+            s=10,
+            edgecolors='black',
+            label='All Cluster Centers',
+            zorder=3
+        )
+
+        selected_scat = ax.scatter(
+            [],
+            [],
+            c='magenta',
+            s=6,
+            label='Selected Goal Cluster',
+            zorder=4
+        )
+
+        goal_scat = ax.scatter(
+            [],
+            [],
+            c='yellow',
+            marker='X',
+            s=25,
+            edgecolors='black',
+            label='Goal Centroid',
+            zorder=6
+        )
         
-        trajectory_line, = ax.plot([], [], c='blue', linewidth=1.0, alpha=0.7, zorder=3, label='Traveled Path')
-        path_line, = ax.plot([], [], c='blue', linewidth=2, zorder=5, label='Planned Path')
-        robot_marker = ax.scatter([], [], c='blue', marker='s', s=20, label='Robot', zorder=11)
+        trajectory_line, = ax.plot(
+            [],
+            [],
+            c='blue',
+            linewidth=1.0,
+            alpha=0.7,
+            zorder=3,
+            label='Traveled Path'
+        )
+
+        path_line, = ax.plot(
+            [],
+            [],
+            c='blue',
+            linewidth=2,
+            zorder=5,
+            label='Planned Path'
+        )
+
+        robot_marker = ax.scatter(
+            [],
+            [],
+            c='blue',
+            marker='s',
+            s=20,
+            label='Robot',
+            zorder=11
+        )
         
         ax.set_xlabel("X (meters)")
         ax.set_ylabel("Y (meters)")
         ax.set_title("Exploration Pipeline: High-Performance Persistent BFS")
         ax.legend(loc='upper right')
+
+
     else:
+
         fig = ax = im_artist = None
         frontiers_scat = all_centers_scat = selected_scat = goal_scat = None
         trajectory_line = path_line = robot_marker = None
-        
-    for t_lidar, lidar_points in lidar_stream:
 
-        if REALTIME_REPLAY and previous_lidar_time is not None:
-            dt = (t_lidar - previous_lidar_time) / 1000.0
-            time.sleep(dt)
+    # for t_lidar, lidar_points in lidar_stream:
+    while True:
 
-        previous_lidar_time = t_lidar
+        lidar_msg = get_lidar()
+        state_msg = get_state()
 
-        try:
-            while t_next < t_lidar:
-                t_prev, pos_prev, rpy_prev = t_next, pos_next, rpy_next
-                t_next, pos_next, rpy_next = next(state_iter)
+        if lidar_msg is None or state_msg is None:
+            continue
 
-        except StopIteration:
-            pass
 
-        robot_position, robot_rpy = interpolate_state(
-            t_lidar,
-            t_prev, pos_prev, rpy_prev,
-            t_next, pos_next, rpy_next
+        lidar_points = pointcloud_to_xyz(lidar_msg)
+
+        robot_position = np.array(state_msg.position)
+
+        robot_rpy = np.array(
+            state_msg.imu_state.rpy
         )
+
+
+        # if REALTIME_REPLAY and previous_lidar_time is not None:
+        #     dt = (t_lidar - previous_lidar_time) / 1000.0
+        #     time.sleep(dt)
+
+        # previous_lidar_time = t_lidar
+
+        # try:
+        #     while t_next < t_lidar:
+        #         t_prev, pos_prev, rpy_prev = t_next, pos_next, rpy_next
+        #         t_next, pos_next, rpy_next = next(state_iter)
+
+        # except StopIteration:
+        #     pass
+
+        # robot_position, robot_rpy = interpolate_state(
+        #     t_lidar,
+        #     t_prev, pos_prev, rpy_prev,
+        #     t_next, pos_next, rpy_next
+        # )
 
         robot_points = lidar_to_robot(lidar_points)
 
@@ -322,13 +439,15 @@ if __name__ == "__main__":
         update_grid(
             occupancy_grid,
             world_points[:, :2],
-            robot_position[:2]
+            robot_position[:2]3
         )
 
         trajectory_points.append(robot_position[:2].copy())
-        frame_count += 1
+        if len(trajectory_points) > 5000:
+            trajectory_points.pop(0)
 
-        if frame_count % 10 == 0:
+        frame_count += 1
+        if frame_count % 15 == 0:
             rx_grid, ry_grid = world_to_grid(robot_position[:2].reshape(1, 2))
             
             if len(rx_grid) > 0:
@@ -431,6 +550,5 @@ if __name__ == "__main__":
                     fig.canvas.draw_idle()
                     plt.pause(0.001)
 
-        trajectory_points.append(robot_position[:2].copy())
     
     #plot_grid(occupancy_grid, trajectory_points, ORIGIN_X, ORIGIN_Y)
