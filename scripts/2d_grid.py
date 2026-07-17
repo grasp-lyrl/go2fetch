@@ -25,8 +25,8 @@ EXCLUSION_RADIUS = 0.45
 MIN_RANGE = 0.2
 MAX_RANGE = 12.0
 
-FORWARD_SPEED = 0.01
-TURN_SPEED = 0.03
+FORWARD_SPEED = 0.1
+TURN_SPEED = 0.5
 
 def create_grid():
     return np.zeros((MAP_HEIGHT, MAP_WIDTH), dtype=np.int16)
@@ -518,16 +518,13 @@ if __name__ == "__main__":
                 yaw_error = np.arctan2(np.sin(target_yaw - robot_rpy[2]), np.cos(target_yaw - robot_rpy[2]))
 
                 if abs(yaw_error) > 0.3:
-
                     vx = 0.0
                     vy = 0.0
                     vyaw = np.clip(yaw_error, -TURN_SPEED, TURN_SPEED)
-
                 else:
-
                     vx = FORWARD_SPEED
                     vy = 0.0
-                    vyaw = 0.0
+                    vyaw = np.clip(yaw_error, -TURN_SPEED, TURN_SPEED)
 
                 move(client, vx, vy, vyaw)
                 #print(f"would move... vx:{vx:.2f} vy:{vy:.2f} vyaw:{vyaw:.2f}")
