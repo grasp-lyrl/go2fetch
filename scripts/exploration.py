@@ -275,7 +275,7 @@ def plot_mat(best_goal, goal_x, goal_y, path, path_xs, path_ys, trajectory_point
 
     ax.set_xlim(dynamic_min_x, ORIGIN_X + (occupancy_grid.shape[1] * RESOLUTION))
 
-def plot_cv2(best_goal, goal_x, goal_y, path, trajectory_points, robot_position, RESOLUTION, ORIGIN_X, ORIGIN_Y, frontier_cells, frontier_clusters, occupancy_grid):
+def plot_cv2(best_goal, goal_x, goal_y, path, trajectory_points, robot_position, robot_rpy, vx, vy, vyaw, RESOLUTION, ORIGIN_X, ORIGIN_Y, frontier_cells, frontier_clusters, occupancy_grid):
 
     WINDOW_NAME = "Exploration Pipeline - OpenCV Live View"
 
@@ -335,6 +335,70 @@ def plot_cv2(best_goal, goal_x, goal_y, path, trajectory_points, robot_position,
             cv2.line(display_img, (c1, r1), (c2, r2), (255, 0, 0), 2) 
     rc, rr = world_to_grid_pixel(robot_position[0], robot_position[1])
     cv2.rectangle(display_img, (rc - 3, rr - 3), (rc + 3, rr + 3), (200, 0, 0), -1)
+
+    rc, rr = world_to_grid_pixel(robot_position[0],robot_position[1])
+
+    yaw = robot_rpy[2]
+
+    scale = 1.0 / RESOLUTION
+
+    dx = goal_x - robot_position[0]
+    dy = goal_y - robot_position[1]
+
+    distance = np.sqrt(dx**2 + dy**2)
+
+    if distance > 0.01:
+
+        arrow_length = 1.0 / RESOLUTION
+
+        end_x = int(rc + (dx / distance) * arrow_length)
+        end_y = int(rr + (dy / distance) * arrow_length)
+
+        cv2.arrowedLine(
+            display_img,
+            (rc, rr),
+            (end_x, end_y),
+            (0,255,0),
+            2,
+            tipLength=0.25
+        )
+
+    if abs(vyaw) > 0.01:
+        radius = 12
+
+        arc_angle = min(abs(vyaw) * 180, 120)
+
+        if vyaw > 0:
+            start_angle = 0
+            end_angle = arc_angle
+        else:
+            start_angle = 0
+            end_angle = -arc_angle
+
+        cv2.ellipse(
+            display_img,
+            (rc, rr),
+            (radius, radius),
+            0,
+            start_angle,
+            end_angle,
+            (0, 0, 255),
+            2
+        )
+
+        angle = np.deg2rad(end_angle)
+
+        arrow_x = int(rc + radius * np.cos(angle))
+        arrow_y = int(rr + radius * np.sin(angle))
+
+        cv2.arrowedLine(
+            display_img,
+            (arrow_x - 2, arrow_y - 2),
+            (arrow_x, arrow_y),
+            (0, 0, 255),
+            2,
+            tipLength=0.5
+        )
 
     min_x, max_x = robot_position[0] - 10.0, robot_position[0] + 10.0
     min_y, max_y = robot_position[1] - 10.0, robot_position[1] + 10.0

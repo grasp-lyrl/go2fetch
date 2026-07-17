@@ -1,6 +1,8 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import time
+import keyboard
+import cv2
 
 from examples.read_lidar_rrd import get_lidar_points
 from examples.read_state_rrd import get_state_stream
@@ -8,6 +10,8 @@ from scripts import exploration
 
 from go2_interface.lidar import make_lidar_reader, pointcloud_to_xyz
 from go2_interface.state import make_state_reader
+from go2_interface.command import make_sport_client, move, stop
+
 RESOLUTION = 0.05        
 MAP_WIDTH = 2000     
 MAP_HEIGHT = 1000
@@ -20,6 +24,9 @@ Z_MAX = 1.6
 EXCLUSION_RADIUS = 0.45
 MIN_RANGE = 0.2
 MAX_RANGE = 12.0
+
+FORWARD_SPEED = 0.01
+TURN_SPEED = 0.03
 
 def create_grid():
     return np.zeros((MAP_HEIGHT, MAP_WIDTH), dtype=np.int16)
@@ -241,6 +248,15 @@ if __name__ == "__main__":
     USE_CV2 = True
     REALTIME_REPLAY = False
 
+    vx = 0.0
+    vy = 0.0
+    vyaw = 0.0
+
+    goal_x = None
+    goal_y = None
+
+    execute_path = False
+
     occupancy_grid = create_grid()
 
     # lidar_stream = get_lidar_points("logs/levine.rrd")
@@ -253,6 +269,8 @@ if __name__ == "__main__":
 
     get_lidar = make_lidar_reader("en7")
     get_state = make_state_reader("en7")
+
+    client = make_sport_client("en7")
 
     state_msg = None
 
@@ -372,9 +390,9 @@ if __name__ == "__main__":
             zorder=11
         )
         
-        ax.set_xlabel("X (meters)")
-        ax.set_ylabel("Y (meters)")
-        ax.set_title("Exploration Pipeline: High-Performance Persistent BFS")
+        ax.set_xlabel("X (m)")
+        ax.set_ylabel("Y (m)")
+        ax.set_title("Exploration Pipeline: BFS Planning")
         ax.legend(loc='upper right')
 
 
@@ -383,6 +401,21 @@ if __name__ == "__main__":
         fig = ax = im_artist = None
         frontiers_scat = all_centers_scat = selected_scat = goal_scat = None
         trajectory_line = path_line = robot_marker = None
+
+    robot_mode = "PLANNING"
+
+    current_goal = None
+    current_path = None
+
+    active_goal = None
+    active_path = None
+
+    goal_x = None
+    goal_y = None
+
+    vx = 0.0
+    vy = 0.0
+    vyaw = 0.0
 
     # for t_lidar, lidar_points in lidar_stream:
     while True:
@@ -393,162 +426,120 @@ if __name__ == "__main__":
         if lidar_msg is None or state_msg is None:
             continue
 
-
         lidar_points = pointcloud_to_xyz(lidar_msg)
 
         robot_position = np.array(state_msg.position)
-
-        robot_rpy = np.array(
-            state_msg.imu_state.rpy
-        )
-
-
-        # if REALTIME_REPLAY and previous_lidar_time is not None:
-        #     dt = (t_lidar - previous_lidar_time) / 1000.0
-        #     time.sleep(dt)
-
-        # previous_lidar_time = t_lidar
-
-        # try:
-        #     while t_next < t_lidar:
-        #         t_prev, pos_prev, rpy_prev = t_next, pos_next, rpy_next
-        #         t_next, pos_next, rpy_next = next(state_iter)
-
-        # except StopIteration:
-        #     pass
-
-        # robot_position, robot_rpy = interpolate_state(
-        #     t_lidar,
-        #     t_prev, pos_prev, rpy_prev,
-        #     t_next, pos_next, rpy_next
-        # )
+        robot_rpy = np.array(state_msg.imu_state.rpy)
 
         robot_points = lidar_to_robot(lidar_points)
 
-        world_points = robot_to_world(
-            robot_points,
-            robot_position,
-            robot_rpy
-        )
+        world_points = robot_to_world(robot_points, robot_position, robot_rpy)
 
-        world_points = filter_height(
-            world_points,
-            robot_position
-        )
+        world_points = filter_height(world_points, robot_position)
 
-        update_grid(
-            occupancy_grid,
-            world_points[:, :2],
-            robot_position[:2]3
-        )
+        update_grid(occupancy_grid, world_points[:, :2], robot_position[:2])
 
         trajectory_points.append(robot_position[:2].copy())
-        if len(trajectory_points) > 5000:
-            trajectory_points.pop(0)
 
-        frame_count += 1
-        if frame_count % 15 == 0:
-            rx_grid, ry_grid = world_to_grid(robot_position[:2].reshape(1, 2))
-            
-            if len(rx_grid) > 0:
-                robot_grid_cell = (ry_grid[0], rx_grid[0]) 
 
-                reachable_set, parent_map, cost_map = exploration.compute_reachability(occupancy_grid,
-                robot_grid_cell,
-                resolution=RESOLUTION
-                )
+        if robot_mode == "PLANNING":
+
+            frame_count += 1
+
+            if frame_count % 15 == 0:
+
+                rx_grid, ry_grid = world_to_grid(robot_position[:2].reshape(1, 2))
+
+                if len(rx_grid) > 0:
+
+                    robot_grid_cell = (ry_grid[0], rx_grid[0])
+
+                    reachable_set, parent_map, cost_map = exploration.compute_reachability(occupancy_grid, robot_grid_cell, resolution=RESOLUTION)
+
+                    frontier_cells = exploration.detect_frontiers_cv2(occupancy_grid, robot_grid_cell, resolution=RESOLUTION)
+
+                    frontier_clusters = exploration.cluster_frontiers_cv2(occupancy_grid, frontier_cells, reachable_set, cost_map, resolution=RESOLUTION)
+
+                    reachable_clusters = [c for c in frontier_clusters if c["reachable"]]
+
+                    if reachable_clusters:
+
+                        current_goal = max(reachable_clusters, key=lambda c: (0.4 * c["size"] - 0.6 * c["cost"]))
+
+                        goal_row, goal_col = current_goal["center"]
+
+                        goal_x = (goal_col + 0.5) * RESOLUTION + ORIGIN_X
+                        goal_y = (goal_row + 0.5) * RESOLUTION + ORIGIN_Y
+
+                        current_path = exploration.plan_path(occupancy_grid, goal=(goal_row, goal_col), parent_map=parent_map, reachable_set=reachable_set)
                 
 
-                frontier_cells = exploration.detect_frontiers_cv2(
-                    occupancy_grid, 
-                    robot_grid_cell,
-                    resolution=RESOLUTION
-                )
+            if cv2.waitKey(1) & 0xFF == ord('w'):
 
-                frontier_clusters = exploration.cluster_frontiers_cv2(
-                    occupancy_grid,
-                    frontier_cells,
-                    reachable_set,
-                    cost_map,
-                    resolution=RESOLUTION
-                )
+                if current_path and goal_x is not None and goal_y is not None and current_goal is not None:
+                    active_path = current_path.copy()
+                    active_goal = current_goal
 
-                if not USE_CV2:
-                    if frontier_clusters:
-                        all_c_xs = [((cl['center'][1] + 0.5) * RESOLUTION) + ORIGIN_X for cl in frontier_clusters]
-                        all_c_ys = [((cl['center'][0] + 0.5) * RESOLUTION) + ORIGIN_Y for cl in frontier_clusters]
-                        all_centers_scat.set_offsets(np.c_[all_c_xs, all_c_ys])
-                    else:
-                        all_centers_scat.set_offsets(np.empty((0, 2)))
+                    print("executing path")
+                    robot_mode = "EXECUTING"
 
-                    grid_color = np.zeros((occupancy_grid.shape[0], occupancy_grid.shape[1], 3), dtype=np.uint8)
-                    grid_color[occupancy_grid >= 8] = [0, 0, 0]        
-                    grid_color[occupancy_grid <= -8] = [255, 255, 255] 
-                    grid_color[(occupancy_grid > -8) & (occupancy_grid < 8)] = [147, 147, 147] 
-                    im_artist.set_data(grid_color)
-                    
-                    if frontier_cells:
-                        f_xs = [((c[1] + 0.5) * RESOLUTION) + ORIGIN_X for c in frontier_cells]
-                        f_ys = [((c[0] + 0.5) * RESOLUTION) + ORIGIN_Y for c in frontier_cells]
-                        frontiers_scat.set_offsets(np.c_[f_xs, f_ys])
-                    else:
-                        frontiers_scat.set_offsets(np.empty((0, 2)))
+                else:
+                    print("no path yet available")
 
-                path_xs, path_ys = [], []
-                
-                reachable_clusters = [c for c in frontier_clusters if c['reachable']]
-                best_goal = None
-                
-                if reachable_clusters:
-                    if len(reachable_clusters) == 1:
-                        best_goal = reachable_clusters[0]
-                    else:
-                        max_size = max(c['size'] for c in reachable_clusters)
-                        max_dist = max(c['cost'] for c in reachable_clusters)
-                        
-                        highest_score = -1.0
-                        w_size = 0.4
-                        w_dist = 0.6
-                        
-                        for cluster in reachable_clusters:
-                            norm_size = cluster['size'] / max_size if max_size > 0 else 0
-                            norm_dist = (max_dist - cluster['cost']) / max_dist if max_dist > 0 else 0               
-                            score = (w_size * norm_size) + (w_dist * norm_dist)
-                            
-                            if score > highest_score:
-                                highest_score = score
-                                best_goal = cluster
 
-                    goal_row, goal_col = best_goal['center']
-                    
-                    if occupancy_grid[goal_row, goal_col] >= 8:
-                        safe_cells = [cell for cell in best_goal['cells'] if occupancy_grid[cell[0], cell[1]] <= -8]
-                        if safe_cells:
-                            goal_row, goal_col = min(safe_cells, key=lambda c: (c[0]-goal_row)**2 + (c[1]-goal_col)**2)
+        elif robot_mode == "EXECUTING":
 
-                    goal_x = (goal_col + 0.5) * RESOLUTION + ORIGIN_X
-                    goal_y = (goal_row + 0.5) * RESOLUTION + ORIGIN_Y
-                    
-                    path = exploration.plan_path(
-                        occupancy_grid,
-                        goal=(goal_row, goal_col),
-                        parent_map=parent_map,
-                        reachable_set=reachable_set
-                    )
+            if cv2.waitKey(1) & 0xFF == ord('s'):
 
-                    if best_goal is not None and not USE_CV2:
-                        exploration.plot_mat(best_goal, goal_x, goal_y, path, path_xs, path_ys, trajectory_points, robot_position, RESOLUTION, ORIGIN_X, ORIGIN_Y, selected_scat, goal_scat, path_line, trajectory_line, robot_marker, occupancy_grid)
-                    elif best_goal is not None and USE_CV2:
-                        exploration.plot_cv2(best_goal, goal_x, goal_y, path, trajectory_points, robot_position, RESOLUTION, ORIGIN_X, ORIGIN_Y, frontier_cells, frontier_clusters, occupancy_grid)
-                    else:
-                        selected_scat.set_offsets(np.empty((0, 2)))
-                        goal_scat.set_offsets(np.empty((0, 2)))
-                        path_line.set_data([], [])
-                
-                if not USE_CV2:
-                    robot_marker.set_offsets(np.c_[[robot_position[0]], [robot_position[1]]])
-                    fig.canvas.draw_idle()
-                    plt.pause(0.001)
+                stop(client)
 
-    
-    #plot_grid(occupancy_grid, trajectory_points, ORIGIN_X, ORIGIN_Y)
+                print("s was pressed, stopped, planning again")
+
+                active_path = None
+                active_goal = None
+
+                robot_mode = "PLANNING"
+
+                continue
+
+
+            if active_path:
+
+                next_cell = active_path[min(10, len(active_path)-1)]
+
+                target_x = (next_cell[1] + 0.5) * RESOLUTION + ORIGIN_X
+                target_y = (next_cell[0] + 0.5) * RESOLUTION + ORIGIN_Y
+
+                dx = target_x - robot_position[0]
+                dy = target_y - robot_position[1]
+
+                target_yaw = np.arctan2(dy, dx)
+
+                yaw_error = np.arctan2(np.sin(target_yaw - robot_rpy[2]), np.cos(target_yaw - robot_rpy[2]))
+
+                if abs(yaw_error) > 0.3:
+
+                    vx = 0.0
+                    vy = 0.0
+                    vyaw = np.clip(yaw_error, -TURN_SPEED, TURN_SPEED)
+
+                else:
+
+                    vx = FORWARD_SPEED
+                    vy = 0.0
+                    vyaw = 0.0
+
+                move(client, vx, vy, vyaw)
+                #print(f"would move... vx:{vx:.2f} vy:{vy:.2f} vyaw:{vyaw:.2f}")
+
+                print(f"cmd... x:{robot_position[0]:.2f} y:{robot_position[1]:.2f} yaw:{robot_rpy[2]:.2f} vx:{vx:.2f} vy:{vy:.2f} vyaw:{vyaw:.2f}")
+
+
+        if USE_CV2 and current_goal is not None and goal_x is not None and goal_y is not None:
+
+            display_path = active_path if robot_mode == "EXECUTING" else current_path
+            display_goal = active_goal if robot_mode == "EXECUTING" else current_goal
+
+            exploration.plot_cv2(display_goal, goal_x, goal_y, display_path, trajectory_points, robot_position, robot_rpy, vx, vy, vyaw, RESOLUTION, ORIGIN_X, ORIGIN_Y, frontier_cells, frontier_clusters, occupancy_grid)  
+       
+       #plot_grid(occupancy_grid, trajectory_points, ORIGIN_X, ORIGIN_Y)
