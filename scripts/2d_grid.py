@@ -417,8 +417,26 @@ if __name__ == "__main__":
     vy = 0.0
     vyaw = 0.0
 
+    path_index = 10
+    start_time = None
+    started = False
+
     # for t_lidar, lidar_points in lidar_stream:
     while True:
+
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord('s'):
+
+            stop(client)
+
+            print("s was pressed, stopped, planning again")
+
+            active_path = None
+            active_goal = None
+
+            robot_mode = "PLANNING"
+
+            continue
 
         lidar_msg = get_lidar()
         state_msg = get_state()
@@ -443,7 +461,6 @@ if __name__ == "__main__":
 
 
         if robot_mode == "PLANNING":
-
             frame_count += 1
 
             if frame_count % 15 == 0:
@@ -454,82 +471,186 @@ if __name__ == "__main__":
 
                     robot_grid_cell = (ry_grid[0], rx_grid[0])
 
-                    reachable_set, parent_map, cost_map = exploration.compute_reachability(occupancy_grid, robot_grid_cell, resolution=RESOLUTION)
+                    reachable_set, parent_map, cost_map = exploration.compute_reachability(
+                        occupancy_grid,
+                        robot_grid_cell,
+                        resolution=RESOLUTION
+                    )
 
-                    frontier_cells = exploration.detect_frontiers_cv2(occupancy_grid, robot_grid_cell, resolution=RESOLUTION)
+                    frontier_cells = exploration.detect_frontiers_cv2(
+                        occupancy_grid,
+                        robot_grid_cell,
+                        resolution=RESOLUTION
+                    )
 
-                    frontier_clusters = exploration.cluster_frontiers_cv2(occupancy_grid, frontier_cells, reachable_set, cost_map, resolution=RESOLUTION)
+                    frontier_clusters = exploration.cluster_frontiers_cv2(
+                        occupancy_grid,
+                        frontier_cells,
+                        reachable_set,
+                        cost_map,
+                        resolution=RESOLUTION
+                    )
 
-                    reachable_clusters = [c for c in frontier_clusters if c["reachable"]]
+                    reachable_clusters = [
+                        c for c in frontier_clusters if c["reachable"]
+                    ]
 
                     if reachable_clusters:
 
-                        current_goal = max(reachable_clusters, key=lambda c: (0.4 * c["size"] - 0.6 * c["cost"]))
+                        current_goal = max(
+                            reachable_clusters,
+                            key=lambda c: (0.4 * c["size"] - 0.6 * c["cost"])
+                        )
 
                         goal_row, goal_col = current_goal["center"]
 
                         goal_x = (goal_col + 0.5) * RESOLUTION + ORIGIN_X
                         goal_y = (goal_row + 0.5) * RESOLUTION + ORIGIN_Y
 
-                        current_path = exploration.plan_path(occupancy_grid, goal=(goal_row, goal_col), parent_map=parent_map, reachable_set=reachable_set)
-                
+                        current_path = exploration.plan_path(
+                            occupancy_grid,
+                            goal=(goal_row, goal_col),
+                            parent_map=parent_map,
+                            reachable_set=reachable_set
+                        )
 
-            if cv2.waitKey(1) & 0xFF == ord('w'):
+                        if current_path:
 
-                if current_path and goal_x is not None and goal_y is not None and current_goal is not None:
+                            if started:
+
+                                active_path = current_path.copy()
+                                active_goal = current_goal
+                                path_index = min(10, len(active_path)-1)
+                                start_time = time.time()
+
+                                print("NEW PATH FOUND - STARTING")
+
+                                robot_mode = "STARTING"
+
+                            else:
+                                print("FIRST PATH READY - PRESS W")
+                                robot_mode = "WAITING"
+
+        elif robot_mode == "STARTING":
+            if time.time() - start_time > 0.1:
+
+                print("EXECUTING")
+
+                robot_mode = "EXECUTING"
+
+
+        elif robot_mode == "WAITING":
+            if key == ord('w'):
+
+                if current_path and goal_x is not None and goal_y is not None:
+
                     active_path = current_path.copy()
                     active_goal = current_goal
 
-                    print("executing path")
+                    path_index = min(10, len(active_path)-1)
+
+                    started = True
+
+                    print("STARTING AUTONOMOUS EXPLORATION")
+
                     robot_mode = "EXECUTING"
 
                 else:
-                    print("no path yet available")
+
+                    print("NO VALID PATH")
+
 
 
         elif robot_mode == "EXECUTING":
 
-            if cv2.waitKey(1) & 0xFF == ord('s'):
-
-                stop(client)
-
-                print("s was pressed, stopped, planning again")
-
-                active_path = None
-                active_goal = None
-
-                robot_mode = "PLANNING"
-
-                continue
-
-
             if active_path:
 
-                next_cell = active_path[min(10, len(active_path)-1)]
+                next_cell = active_path[
+                    min(path_index, len(active_path)-1)
+                ]
 
                 target_x = (next_cell[1] + 0.5) * RESOLUTION + ORIGIN_X
                 target_y = (next_cell[0] + 0.5) * RESOLUTION + ORIGIN_Y
 
+
                 dx = target_x - robot_position[0]
                 dy = target_y - robot_position[1]
 
+                distance_to_waypoint = np.sqrt(dx**2 + dy**2)
+
+
+                # advance waypoint
+                if distance_to_waypoint < 0.15:
+
+                    if path_index < len(active_path)-1:
+
+                        path_index += 5
+
+                        print("ADVANCING PATH INDEX:", path_index)
+
+                    else:
+
+                        goal_distance = np.sqrt(
+                            (goal_x - robot_position[0])**2 +
+                            (goal_y - robot_position[1])**2
+                        )
+
+                        if goal_distance < 0.30:
+
+                            stop(client)
+
+                            print("GOAL REACHED - REPLANNING")
+
+                            active_path = None
+                            active_goal = None
+                            path_index = 10
+
+                            robot_mode = "PLANNING"
+
+                            continue
+
+
                 target_yaw = np.arctan2(dy, dx)
 
-                yaw_error = np.arctan2(np.sin(target_yaw - robot_rpy[2]), np.cos(target_yaw - robot_rpy[2]))
+                yaw_error = np.arctan2(
+                    np.sin(target_yaw - robot_rpy[2]),
+                    np.cos(target_yaw - robot_rpy[2])
+                )
+
 
                 if abs(yaw_error) > 0.3:
+
                     vx = 0.0
                     vy = 0.0
-                    vyaw = np.clip(yaw_error, -TURN_SPEED, TURN_SPEED)
+                    vyaw = np.clip(
+                        yaw_error,
+                        -TURN_SPEED,
+                        TURN_SPEED
+                    )
+
                 else:
+
                     vx = FORWARD_SPEED
                     vy = 0.0
-                    vyaw = np.clip(yaw_error, -TURN_SPEED, TURN_SPEED)
+                    vyaw = np.clip(
+                        yaw_error,
+                        -TURN_SPEED,
+                        TURN_SPEED
+                    )
+
 
                 move(client, vx, vy, vyaw)
-                #print(f"would move... vx:{vx:.2f} vy:{vy:.2f} vyaw:{vyaw:.2f}")
 
-                print(f"cmd... x:{robot_position[0]:.2f} y:{robot_position[1]:.2f} yaw:{robot_rpy[2]:.2f} vx:{vx:.2f} vy:{vy:.2f} vyaw:{vyaw:.2f}")
+
+                print(
+                    f"EXEC | INDEX:{path_index} "
+                    f"x:{robot_position[0]:.2f} "
+                    f"y:{robot_position[1]:.2f} "
+                    f"yaw:{robot_rpy[2]:.2f} "
+                    f"vx:{vx:.2f} "
+                    f"vy:{vy:.2f} "
+                    f"vyaw:{vyaw:.2f}"
+                )
 
 
         if USE_CV2 and current_goal is not None and goal_x is not None and goal_y is not None:
@@ -537,6 +658,6 @@ if __name__ == "__main__":
             display_path = active_path if robot_mode == "EXECUTING" else current_path
             display_goal = active_goal if robot_mode == "EXECUTING" else current_goal
 
-            exploration.plot_cv2(display_goal, goal_x, goal_y, display_path, trajectory_points, robot_position, robot_rpy, vx, vy, vyaw, RESOLUTION, ORIGIN_X, ORIGIN_Y, frontier_cells, frontier_clusters, occupancy_grid)  
+            exploration.plot_cv2(display_goal, goal_x, goal_y, display_path, trajectory_points, robot_position, robot_rpy, vx, vy, vyaw, RESOLUTION, ORIGIN_X, ORIGIN_Y, frontier_cells, frontier_clusters, occupancy_grid, path_index)  
        
        #plot_grid(occupancy_grid, trajectory_points, ORIGIN_X, ORIGIN_Y)

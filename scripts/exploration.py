@@ -275,7 +275,7 @@ def plot_mat(best_goal, goal_x, goal_y, path, path_xs, path_ys, trajectory_point
 
     ax.set_xlim(dynamic_min_x, ORIGIN_X + (occupancy_grid.shape[1] * RESOLUTION))
 
-def plot_cv2(best_goal, goal_x, goal_y, path, trajectory_points, robot_position, robot_rpy, vx, vy, vyaw, RESOLUTION, ORIGIN_X, ORIGIN_Y, frontier_cells, frontier_clusters, occupancy_grid):
+def plot_cv2(best_goal, goal_x, goal_y, path, trajectory_points, robot_position, robot_rpy, vx, vy, vyaw, RESOLUTION, ORIGIN_X, ORIGIN_Y, frontier_cells, frontier_clusters, occupancy_grid, path_index):
 
     WINDOW_NAME = "Exploration Pipeline - OpenCV Live View"
 
@@ -333,6 +333,19 @@ def plot_cv2(best_goal, goal_x, goal_y, path, trajectory_points, robot_position,
             r1, c1 = path[i]
             r2, c2 = path[i+1]
             cv2.line(display_img, (c1, r1), (c2, r2), (255, 0, 0), 2) 
+
+    if path is not None and len(path) > 0:
+
+        target_row, target_col = path[min(path_index, len(path)-1)]
+
+        cv2.circle(
+            display_img,
+            (target_col, target_row),
+            6,
+            (255, 0, 255),
+            -1
+        )
+
     rc, rr = world_to_grid_pixel(robot_position[0], robot_position[1])
     cv2.rectangle(display_img, (rc - 3, rr - 3), (rc + 3, rr + 3), (200, 0, 0), -1)
 
