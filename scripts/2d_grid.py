@@ -25,8 +25,8 @@ EXCLUSION_RADIUS = 0.45
 MIN_RANGE = 0.2
 MAX_RANGE = 12.0
 
-FORWARD_SPEED = 0.1
-TURN_SPEED = 0.5
+FORWARD_SPEED = 0.2
+TURN_SPEED = 0.75
 
 def create_grid():
     return np.zeros((MAP_HEIGHT, MAP_WIDTH), dtype=np.int16)
@@ -434,7 +434,7 @@ if __name__ == "__main__":
             active_path = None
             active_goal = None
 
-            robot_mode = "PLANNING"
+            robot_mode = "WAITING"
 
             continue
 
@@ -586,6 +586,20 @@ if __name__ == "__main__":
 
                         path_index += 5
 
+                        if path_index >= 50:
+
+                            stop(client)
+
+                            print("REPLAN CHECKPOINT")
+
+                            active_path = None
+                            active_goal = None
+                            path_index = 10
+
+                            robot_mode = "PLANNING"
+
+                            continue
+
                         print("ADVANCING PATH INDEX:", path_index)
 
                     else:
@@ -618,7 +632,7 @@ if __name__ == "__main__":
                 )
 
 
-                if abs(yaw_error) > 0.3:
+                if abs(yaw_error) > 0.6:
 
                     vx = 0.0
                     vy = 0.0

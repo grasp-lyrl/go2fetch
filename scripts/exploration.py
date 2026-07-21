@@ -140,10 +140,18 @@ def compute_reachability(grid_array, start, inflation_radius=0, resolution=0.05,
             reachable_set.add(neighbor)
             parent_map[neighbor] = current
 
+            obstacle_penalty = 0
+
+            for rr in range(max(0, nr-3), min(rows, nr+4)):
+                for cc in range(max(0, nc-3), min(cols, nr+4)):
+                    if blocked_mask[rr, cc]:
+                        obstacle_penalty += 2.0
+
+
             if dr != 0 and dc != 0:
-                cost_map[neighbor] = cost_map[current] + 1.414
+                cost_map[neighbor] = cost_map[current] + 1.414 + obstacle_penalty
             else:
-                cost_map[neighbor] = cost_map[current] + 1
+                cost_map[neighbor] = cost_map[current] + 1 + obstacle_penalty
 
             queue.append(neighbor)
 
