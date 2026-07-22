@@ -2,6 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import numpy as np
 from collections import deque
+import heapq
 import cv2
 from matplotlib.patches import Rectangle
 
@@ -97,7 +98,7 @@ def compute_reachability(grid_array, start, inflation_radius=0, resolution=0.05,
 
     inflated_mask[start[0], start[1]] = False
 
-    queue = deque([start])
+    queue = [(0, start)]
 
     parent_map = {start: None}
     cost_map = {start: 0}
@@ -111,16 +112,19 @@ def compute_reachability(grid_array, start, inflation_radius=0, resolution=0.05,
     ]
 
     while queue:
-        current = queue.popleft()
+        current_cost, current = heapq.heappop(queue)
+
+        if current not in cost_map:
+            continue
+
+        if current_cost > cost_map[current]:
+            continue
 
         for dr, dc in directions:
             nr = current[0] + dr
             nc = current[1] + dc
 
             if not (r_min <= nr < r_max and c_min <= nc < c_max):
-                continue
-
-            if (nr, nc) in reachable_set:
                 continue
 
             if grid_array[nr, nc] > -8:
@@ -136,24 +140,31 @@ def compute_reachability(grid_array, start, inflation_radius=0, resolution=0.05,
                     continue
 
             neighbor = (nr, nc)
-
-            reachable_set.add(neighbor)
-            parent_map[neighbor] = current
-
             obstacle_penalty = 0
 
-            for rr in range(max(0, nr-3), min(rows, nr+4)):
-                for cc in range(max(0, nc-3), min(cols, nr+4)):
-                    if blocked_mask[rr, cc]:
-                        obstacle_penalty += 2.0
+            for rr in range(max(0, nr-7), min(rows, nr+6)):
+                for cc in range(max(0, nc-7), min(cols, nc+6)):
+                    if inflated_mask[rr, cc]:
+                        obstacle_penalty += 1
+
+            obstacle_penalty = obstacle_penalty ** 2
 
 
             if dr != 0 and dc != 0:
-                cost_map[neighbor] = cost_map[current] + 1.414 + obstacle_penalty
+                new_cost = cost_map[current] + 1.414 + obstacle_penalty
             else:
-                cost_map[neighbor] = cost_map[current] + 1 + obstacle_penalty
+                new_cost = cost_map[current] + 1 + obstacle_penalty
 
-            queue.append(neighbor)
+            if neighbor not in cost_map or new_cost < cost_map[neighbor]:
+
+                cost_map[neighbor] = new_cost
+                parent_map[neighbor] = current
+                reachable_set.add(neighbor)
+
+                heapq.heappush(
+                    queue,
+                    (new_cost, neighbor)
+                )
 
     return reachable_set, parent_map, cost_map
 

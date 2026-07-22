@@ -1,37 +1,14 @@
 from ultralytics import YOLO
-#import rerun as rr
 import cv2
 import numpy as np
 import time
 
 from go2_interface.camera import make_camera_reader
 
-
 model = YOLO("yolo11n.pt")
-CONF = 0.5
+CONF = 0.8
 
-#rr.init("go2fetch_yolo")
-
-#recording = cv2.VideoCapture("../logs/levine.mp4") #for test recordings
-
-camera = make_camera_reader("en7") 
-while camera.read() is None: 
-    time.sleep(0.01)
-
-print("camera connected")
-
-first_frame = camera.read()
-
-height, width = first_frame.shape[:2]
-fps = 15
-
-fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-output = cv2.VideoWriter("data/live_yolo.mp4", fourcc, fps, (width, height))
-
-all_frames = []
-
-def process_frame(frame, index):
-    #rr.set_time_sequence("frame", index)
+def process_frame(frame):
 
     results = model(frame, verbose=False)
 
@@ -59,7 +36,7 @@ def process_frame(frame, index):
 
     return annotated, frame_detections
 
-
+"""
 index = 0
 
 try:
@@ -92,3 +69,4 @@ finally:
     camera.stop()
     output.release()
     cv2.destroyAllWindows()
+"""

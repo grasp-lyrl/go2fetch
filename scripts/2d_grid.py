@@ -1,16 +1,19 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import time
-import keyboard
 import cv2
 
 from examples.read_lidar_rrd import get_lidar_points
 from examples.read_state_rrd import get_state_stream
-from scripts import exploration
 
+from scripts import exploration
+from scripts.yolo_live import process_frame
+
+from go2_interface.camera import make_camera_reader
 from go2_interface.lidar import make_lidar_reader, pointcloud_to_xyz
 from go2_interface.state import make_state_reader
 from go2_interface.command import make_sport_client, move, stop
+
 
 RESOLUTION = 0.05        
 MAP_WIDTH = 2000     
@@ -25,8 +28,8 @@ EXCLUSION_RADIUS = 0.45
 MIN_RANGE = 0.2
 MAX_RANGE = 12.0
 
-FORWARD_SPEED = 0.2
-TURN_SPEED = 0.75
+FORWARD_SPEED = 0.5
+TURN_SPEED = 1.5
 
 def create_grid():
     return np.zeros((MAP_HEIGHT, MAP_WIDTH), dtype=np.int16)
@@ -272,6 +275,12 @@ if __name__ == "__main__":
 
     client = make_sport_client("en7")
 
+    camera = make_camera_reader("en7")
+
+    while camera.read() is None:
+        time.sleep(0.01)
+    print("camera connected")
+
     state_msg = None
 
     while state_msg is None:
@@ -284,7 +293,6 @@ if __name__ == "__main__":
 
     ORIGIN_X = initial_position[0] - (MAP_WIDTH * RESOLUTION) / 2.0
     ORIGIN_Y = initial_position[1] - (MAP_HEIGHT * RESOLUTION) / 2.0
-
 
     previous_lidar_time = None
     trajectory_points = []
@@ -401,7 +409,7 @@ if __name__ == "__main__":
         fig = ax = im_artist = None
         frontiers_scat = all_centers_scat = selected_scat = goal_scat = None
         trajectory_line = path_line = robot_marker = None
-
+    
     robot_mode = "PLANNING"
 
     current_goal = None
@@ -418,7 +426,6 @@ if __name__ == "__main__":
     vyaw = 0.0
 
     path_index = 10
-    start_time = None
     started = False
 
     # for t_lidar, lidar_points in lidar_stream:
@@ -491,181 +498,122 @@ if __name__ == "__main__":
                         resolution=RESOLUTION
                     )
 
-                    reachable_clusters = [
-                        c for c in frontier_clusters if c["reachable"]
-                    ]
+                    reachable_clusters = [c for c in frontier_clusters if c["reachable"]]
 
                     if reachable_clusters:
-
-                        current_goal = max(
-                            reachable_clusters,
-                            key=lambda c: (0.4 * c["size"] - 0.6 * c["cost"])
-                        )
+                        current_goal = max(reachable_clusters, key=lambda c: (0.4 * c["size"] - 0.6 * c["cost"]))
 
                         goal_row, goal_col = current_goal["center"]
 
                         goal_x = (goal_col + 0.5) * RESOLUTION + ORIGIN_X
                         goal_y = (goal_row + 0.5) * RESOLUTION + ORIGIN_Y
 
-                        current_path = exploration.plan_path(
-                            occupancy_grid,
-                            goal=(goal_row, goal_col),
-                            parent_map=parent_map,
-                            reachable_set=reachable_set
-                        )
+                        current_path = exploration.plan_path(occupancy_grid, goal=(goal_row, goal_col), parent_map=parent_map, reachable_set=reachable_set)
 
                         if current_path:
-
                             if started:
-
                                 active_path = current_path.copy()
                                 active_goal = current_goal
                                 path_index = min(10, len(active_path)-1)
-                                start_time = time.time()
+                                print("new path found, starting execution")
 
-                                print("NEW PATH FOUND - STARTING")
-
-                                robot_mode = "STARTING"
+                                robot_mode = "EXECUTING"
 
                             else:
-                                print("FIRST PATH READY - PRESS W")
+                                print("press 'w' to start")
                                 robot_mode = "WAITING"
 
-        elif robot_mode == "STARTING":
-            if time.time() - start_time > 0.1:
-
-                print("EXECUTING")
-
-                robot_mode = "EXECUTING"
-
-
         elif robot_mode == "WAITING":
+
             if key == ord('w'):
-
                 if current_path and goal_x is not None and goal_y is not None:
-
                     active_path = current_path.copy()
                     active_goal = current_goal
-
                     path_index = min(10, len(active_path)-1)
-
                     started = True
-
-                    print("STARTING AUTONOMOUS EXPLORATION")
+                    print("staring exploration")
 
                     robot_mode = "EXECUTING"
 
                 else:
-
-                    print("NO VALID PATH")
+                    print("no valid path")
 
 
 
         elif robot_mode == "EXECUTING":
-
+            
             if active_path:
-
-                next_cell = active_path[
-                    min(path_index, len(active_path)-1)
-                ]
+                next_cell = active_path[min(path_index, len(active_path)-1)]
 
                 target_x = (next_cell[1] + 0.5) * RESOLUTION + ORIGIN_X
                 target_y = (next_cell[0] + 0.5) * RESOLUTION + ORIGIN_Y
-
 
                 dx = target_x - robot_position[0]
                 dy = target_y - robot_position[1]
 
                 distance_to_waypoint = np.sqrt(dx**2 + dy**2)
 
-
-                # advance waypoint
-                if distance_to_waypoint < 0.15:
-
+                if distance_to_waypoint < 0.25:
                     if path_index < len(active_path)-1:
-
                         path_index += 5
 
                         if path_index >= 50:
-
                             stop(client)
-
-                            print("REPLAN CHECKPOINT")
-
+                            print("path index > 50, replanning...")
                             active_path = None
                             active_goal = None
                             path_index = 10
-
                             robot_mode = "PLANNING"
-
                             continue
 
-                        print("ADVANCING PATH INDEX:", path_index)
+                        print("current path index", path_index)
 
                     else:
-
-                        goal_distance = np.sqrt(
-                            (goal_x - robot_position[0])**2 +
-                            (goal_y - robot_position[1])**2
-                        )
+                        goal_distance = np.sqrt((goal_x - robot_position[0])**2 + (goal_y - robot_position[1])**2)
 
                         if goal_distance < 0.30:
-
                             stop(client)
-
-                            print("GOAL REACHED - REPLANNING")
-
+                            print("replanning...")
                             active_path = None
                             active_goal = None
                             path_index = 10
-
                             robot_mode = "PLANNING"
-
                             continue
-
 
                 target_yaw = np.arctan2(dy, dx)
 
-                yaw_error = np.arctan2(
-                    np.sin(target_yaw - robot_rpy[2]),
-                    np.cos(target_yaw - robot_rpy[2])
-                )
-
+                yaw_error = np.arctan2(np.sin(target_yaw - robot_rpy[2]), np.cos(target_yaw - robot_rpy[2]))
 
                 if abs(yaw_error) > 0.6:
-
                     vx = 0.0
                     vy = 0.0
-                    vyaw = np.clip(
-                        yaw_error,
-                        -TURN_SPEED,
-                        TURN_SPEED
-                    )
+                    vyaw = np.clip(yaw_error, -TURN_SPEED, TURN_SPEED)
 
                 else:
-
                     vx = FORWARD_SPEED
                     vy = 0.0
-                    vyaw = np.clip(
-                        yaw_error,
-                        -TURN_SPEED,
-                        TURN_SPEED
-                    )
-
+                    vyaw = np.clip(yaw_error, -TURN_SPEED, TURN_SPEED)
 
                 move(client, vx, vy, vyaw)
 
-
                 print(
-                    f"EXEC | INDEX:{path_index} "
-                    f"x:{robot_position[0]:.2f} "
-                    f"y:{robot_position[1]:.2f} "
-                    f"yaw:{robot_rpy[2]:.2f} "
-                    f"vx:{vx:.2f} "
-                    f"vy:{vy:.2f} "
+                    f"executing | path index:{path_index}"
+                    f"x:{robot_position[0]:.2f}"
+                    f"y:{robot_position[1]:.2f}"
+                    f"yaw:{robot_rpy[2]:.2f}"
+                    f"vx:{vx:.2f}"
+                    f"vy:{vy:.2f}"
                     f"vyaw:{vyaw:.2f}"
                 )
 
+            frame = camera.read()
+            if frame is not None:
+                annotated_frame, detections = process_frame(frame)
+
+                cv2.imshow("YOLO Camera", annotated_frame)
+
+                for d in detections:
+                    print(f"{d['class']}, {d['confidence']:.2f}")
 
         if USE_CV2 and current_goal is not None and goal_x is not None and goal_y is not None:
 
