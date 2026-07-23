@@ -10,9 +10,10 @@ CONF = 0.8
 
 def process_frame(frame):
 
-    results = model(frame, verbose=False)
+    results = model(frame, device="mps", half=True, verbose=False)
 
     frame_detections = []
+    annotated = frame.copy()
 
     for box in results[0].boxes:
         conf = float(box.conf)
@@ -23,7 +24,7 @@ def process_frame(frame):
         class_id = int(box.cls)
         class_name = model.names[class_id]
 
-        x1, y1, x2, y2 = map(float, box.xyxy[0].tolist())
+        x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
 
         frame_detections.append({
             "class": class_name,
@@ -31,8 +32,16 @@ def process_frame(frame):
             "bbox": [x1, y1, x2, y2]
         })
 
-    annotated = results[0].plot()
-    annotated = np.asarray(annotated, dtype=np.uint8)
+        cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        cv2.putText(
+            annotated,
+            f"{class_name} {conf:.2f}",
+            (x1, max(0, y1 - 5)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (0, 255, 0),
+            1,
+        )
 
     return annotated, frame_detections
 

@@ -217,6 +217,8 @@ if __name__ == "__main__":
 
     USE_CV2 = True
     REALTIME_REPLAY = False
+    YOLO_EVERY = 5
+    MAP_EVERY = 5
 
     vx = 0.0
     vy = 0.0
@@ -265,6 +267,7 @@ if __name__ == "__main__":
     previous_lidar_time = None
     trajectory_points = []
     frame_count = 0
+    loop_count = 0
 
 
     if not USE_CV2:
@@ -336,6 +339,7 @@ if __name__ == "__main__":
 
     try:
         while True:
+            loop_count += 1
 
             key = cv2.waitKey(1) & 0xFF
             if key == ord('s'):
@@ -519,23 +523,25 @@ if __name__ == "__main__":
                         f"vyaw:{vyaw:.2f}"
                     )
 
-            frame = camera.read()
-            if frame is not None:
-                annotated_frame, detections = process_frame(frame)
-                cv2.imshow("YOLO Camera", annotated_frame)
+            if loop_count % YOLO_EVERY == 0:
+                frame = camera.read()
+                if frame is not None:
+                    annotated_frame, detections = process_frame(frame)
+                    cv2.imshow("YOLO Camera", annotated_frame)
 
-                for d in detections:
-                    print(f"{d['class']}, {d['confidence']:.2f}")
+                    for d in detections:
+                        print(f"{d['class']}, {d['confidence']:.2f}")
 
-                    if d["class"] == "person":
-                        print("person detected")
+                        if d["class"] == "person":
+                            print("person detected")
 
             if USE_CV2 and current_goal is not None and goal_x is not None and goal_y is not None:
 
                 display_path = active_path if robot_mode == "EXECUTING" else current_path
                 display_goal = active_goal if robot_mode == "EXECUTING" else current_goal
 
-                exploration.plot_cv2(display_goal, goal_x, goal_y, display_path, trajectory_points, robot_position, robot_rpy, vx, vy, vyaw, RESOLUTION, ORIGIN_X, ORIGIN_Y, frontier_cells, frontier_clusters, occupancy_grid, path_index, start_position)
+                if loop_count % MAP_EVERY == 0:
+                    exploration.plot_cv2(display_goal, goal_x, goal_y, display_path, trajectory_points, robot_position, robot_rpy, vx, vy, vyaw, RESOLUTION, ORIGIN_X, ORIGIN_Y, frontier_cells, frontier_clusters, occupancy_grid, path_index, start_position)
         #plot_grid(occupancy_grid, trajectory_points, ORIGIN_X, ORIGIN_Y)
     except KeyboardInterrupt:
         print("interruption")
