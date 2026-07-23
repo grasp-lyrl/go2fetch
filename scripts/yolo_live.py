@@ -10,27 +10,16 @@ CONF = 0.8
 
 def process_frame(frame):
 
-    results = model(frame, device="mps", half=True, verbose=False)
+    results = model(frame, device="mps", verbose=False)
 
     frame_detections = []
     annotated = frame.copy()
 
     for box in results[0].boxes:
         conf = float(box.conf)
-
-        if conf < CONF:
-            continue
-
         class_id = int(box.cls)
         class_name = model.names[class_id]
-
         x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
-
-        frame_detections.append({
-            "class": class_name,
-            "confidence": conf,
-            "bbox": [x1, y1, x2, y2]
-        })
 
         cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 255, 0), 2)
         cv2.putText(
@@ -42,6 +31,15 @@ def process_frame(frame):
             (0, 255, 0),
             1,
         )
+
+        if conf < CONF:
+            continue
+
+        frame_detections.append({
+            "class": class_name,
+            "confidence": conf,
+            "bbox": [x1, y1, x2, y2]
+        })
 
     return annotated, frame_detections
 
