@@ -1,6 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import numpy as np
+import os
 from collections import deque
 import heapq
 import cv2
@@ -145,7 +146,7 @@ def compute_reachability(grid_array, start, inflation_radius=0, resolution=0.05,
             for rr in range(max(0, nr-7), min(rows, nr+6)):
                 for cc in range(max(0, nc-7), min(cols, nc+6)):
                     if inflated_mask[rr, cc]:
-                        obstacle_penalty += 1
+                        obstacle_penalty += 3
 
             obstacle_penalty = obstacle_penalty ** 2
 
@@ -294,7 +295,7 @@ def plot_mat(best_goal, goal_x, goal_y, path, path_xs, path_ys, trajectory_point
 
     ax.set_xlim(dynamic_min_x, ORIGIN_X + (occupancy_grid.shape[1] * RESOLUTION))
 
-def plot_cv2(best_goal, goal_x, goal_y, path, trajectory_points, robot_position, robot_rpy, vx, vy, vyaw, RESOLUTION, ORIGIN_X, ORIGIN_Y, frontier_cells, frontier_clusters, occupancy_grid, path_index):
+def plot_cv2(best_goal, goal_x, goal_y, path, trajectory_points, robot_position, robot_rpy, vx, vy, vyaw, RESOLUTION, ORIGIN_X, ORIGIN_Y, frontier_cells, frontier_clusters, occupancy_grid, path_index, start_position, end_position=None, run=None, save=False):
 
     WINDOW_NAME = "Exploration Pipeline - OpenCV Live View"
 
@@ -367,6 +368,16 @@ def plot_cv2(best_goal, goal_x, goal_y, path, trajectory_points, robot_position,
 
     rc, rr = world_to_grid_pixel(robot_position[0], robot_position[1])
     cv2.rectangle(display_img, (rc - 3, rr - 3), (rc + 3, rr + 3), (200, 0, 0), -1)
+
+    if start_position is not None:
+        sc, sr = world_to_grid_pixel(start_position[0], start_position[1])
+
+        cv2.circle(display_img, (sc, sr), 8, (0, 255, 0), -1)
+
+    if end_position is not None:
+        ec, er = world_to_grid_pixel(end_position[0], end_position[1])
+
+        cv2.circle( display_img, (ec, er), 8, (0, 0, 255), -1)
 
     rc, rr = world_to_grid_pixel(robot_position[0],robot_position[1])
 
@@ -457,6 +468,9 @@ def plot_cv2(best_goal, goal_x, goal_y, path, trajectory_points, robot_position,
     draw_dashed_line(display_img, (c_min, r_max), (c_min, r_min), red_bgr, 1)
 
     flipped_display = cv2.flip(display_img, 0)
-
     cv2.imshow(WINDOW_NAME, flipped_display)
+
+    if save:
+        cv2.imwrite(f"{run}/map.png", flipped_display)
+
     cv2.waitKey(1)

@@ -3,7 +3,7 @@ from ultralytics import YOLO
 import cv2
 import numpy as np
 
-model = YOLO("yolo11n.pt")
+model = YOLO("yolo26n.pt")
 CONF = 0.5
 
 #rr.init("go2fetch_yolo")
