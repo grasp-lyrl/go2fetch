@@ -1,3 +1,4 @@
+import argparse
 import numpy as np
 import matplotlib.pyplot as plt
 import time
@@ -299,6 +300,15 @@ def plot_grid(grid, trajectory_points, origin_x, origin_y):
 
 if __name__ == "__main__":
 
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "iface",
+        nargs="?",
+        default="en7",
+        help="network interface connected to Go2 (default: en7)",
+    )
+    args = parser.parse_args()
+
     RUN_NAME = "run002"
     SAVE_DIR = f"data/{RUN_NAME}"
     os.makedirs(SAVE_DIR, exist_ok=True)
@@ -331,12 +341,12 @@ if __name__ == "__main__":
     # t_prev, pos_prev, rpy_prev = next(state_iter)
     # t_next, pos_next, rpy_next = next(state_iter)
 
-    get_lidar = make_lidar_reader("en7")
-    get_state = make_state_reader("en7")
+    get_lidar = make_lidar_reader(args.iface)
+    get_state = make_state_reader(args.iface)
 
-    client = make_sport_client("en7")
+    client = make_sport_client(args.iface)
 
-    camera = make_camera_reader("en7")
+    camera = make_camera_reader(args.iface)
 
     while camera.read() is None:
         time.sleep(0.01)
