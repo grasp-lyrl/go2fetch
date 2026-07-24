@@ -352,10 +352,26 @@ if __name__ == "__main__":
         time.sleep(0.01)
     print("camera connected")
 
+    print("waiting for state...")
     state_msg = None
-
     while state_msg is None:
         state_msg = get_state()
+        time.sleep(0.01)
+    print("state connected")
+
+    print("waiting for lidar...")
+    lidar_wait_start = time.time()
+    stood_up = False
+    while get_lidar() is None:
+        if not stood_up and time.time() - lidar_wait_start > 3.0:
+            print("no lidar yet; sending StandUp to wake unitree_lidar")
+            try:
+                client.StandUp()
+            except Exception as e:
+                print(f"StandUp failed: {e}")
+            stood_up = True
+        time.sleep(0.05)
+    print("lidar connected")
 
     initial_position = np.array(state_msg.position)
     start_position = initial_position[:2].copy()

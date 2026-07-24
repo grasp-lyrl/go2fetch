@@ -2,15 +2,26 @@ from ultralytics import YOLO
 import cv2
 import numpy as np
 import time
+import torch
 
 from go2_interface.camera import make_camera_reader
 
-model = YOLO("yolo26n.pt")
+model = YOLO("yolo26s.pt")
 CONF = 0.5
+
+def _yolo_device():
+    if torch.cuda.is_available():
+        return "cuda"
+    if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
+
+DEVICE = _yolo_device()
+print(f"YOLO device: {DEVICE}")
 
 def process_frame(frame):
 
-    results = model(frame, device="mps", verbose=False)
+    results = model(frame, device=DEVICE, verbose=False)
 
     frame_detections = []
 
