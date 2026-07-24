@@ -6,7 +6,7 @@ import time
 from go2_interface.camera import make_camera_reader
 
 model = YOLO("yolo26n.pt")
-CONF = 0.8
+CONF = 0.5
 
 def process_frame(frame):
 
