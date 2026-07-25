@@ -334,9 +334,19 @@ def plot_cv2(best_goal, goal_x, goal_y, path, trajectory_points, robot_position,
             cv2.circle(display_img, (cc, cr), 2, (0, 140, 255), -1) 
 
     if best_goal is not None:
-        for cell in best_goal['cells']:
-            r, c = cell
-            display_img[r, c] = [255, 0, 255] 
+
+        if "cells" in best_goal:
+            for cell in best_goal["cells"]:
+                r, c = cell
+                display_img[r, c] = [255, 0, 255]
+
+        elif "center" in best_goal:
+            r, c = best_goal["center"]
+            display_img[r, c] = [255, 0, 255]
+
+        elif isinstance(best_goal, tuple):
+            r, c = best_goal
+            display_img[r, c] = [255, 0, 255]
 
 
         if goal_x is not None and goal_y is not None:

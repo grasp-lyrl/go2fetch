@@ -488,9 +488,7 @@ if __name__ == "__main__":
             update_grid(occupancy_grid, world_points[:, :2], robot_position[:2])
             trajectory_points.append(robot_position[:2].copy())
 
-            print("before planning")
             if robot_mode == "PLANNING":
-                print("in planning")
                 frame_count += 1
 
                 if frame_count % 15 == 0:
@@ -545,7 +543,7 @@ if __name__ == "__main__":
                     else:
                         print("no valid path")
 
-
+            
             elif robot_mode == "EXECUTING":
                 
                 replan_counter += 1
@@ -638,6 +636,7 @@ if __name__ == "__main__":
                         f"vy:{vy:.2f} "
                         f"vyaw:{vyaw:.2f}"
                     )
+                    
             if loop_count % YOLO_EVERY == 0:
                 frame = camera.read()
                 if frame is not None:
@@ -717,8 +716,6 @@ if __name__ == "__main__":
 
                             if len(goal_grid_x) > 0:
                                 object_goal = (goal_grid_y[0], goal_grid_x[0])
-                                print("chair world:", goal_x, goal_y)
-                                print("chair grid:", object_goal)
                             else:
                                 print("chair is outside map")
 
