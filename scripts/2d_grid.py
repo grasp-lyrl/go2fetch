@@ -30,7 +30,7 @@ EXCLUSION_RADIUS = 0.45
 MIN_RANGE = 0.2
 MAX_RANGE = 12.0
 
-FORWARD_SPEED = 0.5
+FORWARD_SPEED = 0.2
 TURN_SPEED = 1.5
 
 def create_grid():
@@ -384,7 +384,7 @@ if __name__ == "__main__":
 
     previous_lidar_time = None
     trajectory_points = []
-    frame_count = 0
+    frame_count = 14
     loop_count = 0
 
 
@@ -429,11 +429,15 @@ if __name__ == "__main__":
     robot_mode = "PLANNING"
     replan_counter = 0
 
+    initial_path_planned = False
+
     current_goal = None
     current_path = None
 
     active_goal = None
     active_path = None
+
+    chair_path = None
 
     object_goal = None
 
@@ -463,10 +467,20 @@ if __name__ == "__main__":
             if key == ord('s'):
 
                 stop(client)
-                print("s was pressed, stopped, planning again")
+                print("s was pressed! Hard stop.")
 
                 active_path = None
+                current_path = None
                 active_goal = None
+                chair_path = None
+
+                locked_object = None
+                object_goal = None
+                goal_x = None
+                goal_y = None
+                lost_counter = 0
+
+                started = False
 
                 robot_mode = "WAITING"
                 continue
@@ -489,58 +503,103 @@ if __name__ == "__main__":
             trajectory_points.append(robot_position[:2].copy())
 
             if robot_mode == "PLANNING":
+
                 frame_count += 1
 
-                if frame_count % 15 == 0:
-                    
+                if frame_count % 15 == 0 or not initial_path_planned:
+
                     rx_grid, ry_grid = world_to_grid(robot_position[:2].reshape(1, 2))
 
                     if len(rx_grid) > 0:
+
                         robot_grid_cell = (ry_grid[0], rx_grid[0])
 
-                        reachable_set, parent_map, cost_map = exploration.compute_reachability(occupancy_grid, robot_grid_cell, resolution=RESOLUTION)
+                        reachable_set, parent_map, cost_map = exploration.compute_reachability(
+                            occupancy_grid,
+                            robot_grid_cell,
+                            resolution=RESOLUTION
+                        )
 
-                        frontier_cells = exploration.detect_frontiers_cv2(occupancy_grid, robot_grid_cell, resolution=RESOLUTION)
-                        frontier_clusters = exploration.cluster_frontiers_cv2(occupancy_grid, frontier_cells, reachable_set, cost_map, resolution=RESOLUTION)
+                        frontier_cells = exploration.detect_frontiers_cv2(
+                            occupancy_grid,
+                            robot_grid_cell,
+                            resolution=RESOLUTION
+                        )
 
-                        reachable_clusters = [c for c in frontier_clusters if c["reachable"]]
+                        frontier_clusters = exploration.cluster_frontiers_cv2(
+                            occupancy_grid,
+                            frontier_cells,
+                            reachable_set,
+                            cost_map,
+                            resolution=RESOLUTION
+                        )
+
+                        reachable_clusters = [
+                            c for c in frontier_clusters
+                            if c["reachable"]
+                        ]
 
                         if reachable_clusters:
-                            current_goal = max(reachable_clusters, key=lambda c: (0.4 * c["size"] - 0.6 * c["cost"]))
+
+                            current_goal = max(
+                                reachable_clusters,
+                                key=lambda c: (
+                                    0.4 * c["size"] -
+                                    0.6 * c["cost"]
+                                )
+                            )
 
                             goal_row, goal_col = current_goal["center"]
 
                             goal_x = (goal_col + 0.5) * RESOLUTION + ORIGIN_X
                             goal_y = (goal_row + 0.5) * RESOLUTION + ORIGIN_Y
 
-                            current_path = exploration.plan_path(occupancy_grid, goal=(goal_row, goal_col), parent_map=parent_map, reachable_set=reachable_set)
+                            current_path = exploration.plan_path(
+                                occupancy_grid,
+                                goal=(goal_row, goal_col),
+                                parent_map=parent_map,
+                                reachable_set=reachable_set
+                            )
 
                             if current_path:
+
+                                initial_path_planned = True
+
                                 if started:
+
                                     active_path = current_path.copy()
                                     active_goal = current_goal
                                     path_index = min(10, len(active_path)-1)
+
                                     print("new path found, starting execution")
 
                                     robot_mode = "EXECUTING"
 
                                 else:
+
                                     print("press 'w' to start")
                                     robot_mode = "WAITING"
+
 
             elif robot_mode == "WAITING":
 
                 if key == ord('w'):
-                    if current_path and goal_x is not None and goal_y is not None:
+
+                    if current_path:
+
                         active_path = current_path.copy()
                         active_goal = current_goal
+
                         path_index = min(10, len(active_path)-1)
+
                         started = True
-                        print("staring exploration")
+
+                        print("starting exploration")
 
                         robot_mode = "EXECUTING"
 
                     else:
+
                         print("no valid path")
 
             
@@ -599,6 +658,7 @@ if __name__ == "__main__":
                                 active_goal = current_goal
                                 path_index = 10
                                 current_path = None
+                                current_goal = None
 
                                 print("switching to new path")
 
@@ -637,23 +697,68 @@ if __name__ == "__main__":
                         f"vyaw:{vyaw:.2f}"
                     )
                     
-            if loop_count % YOLO_EVERY == 0:
-                frame = camera.read()
+
+            frame = camera.read()
+
+            if loop_count % YOLO_EVERY == 0 and initial_path_planned:
+
                 if frame is not None:
+
                     annotated_frame, detections = process_frame(frame)
                     chairs = [d for d in detections if d["class"] == TARGET_CLASS]
 
-                    if locked_object is None:
-                        if chairs:
-                            locked_object = max(chairs, key=lambda d: d["confidence"])
+                    chair_found_this_frame = False
 
-                            print("Locked onto chair")
+                    if not chairs:
+
+                        if locked_object is not None:
+
+                            lost_counter += 1
+
+                            if lost_counter > 20:
+
+                                print("Chair lost. Returning to exploration.")
+
+                                stop(client)
+
+                                active_path = None
+                                current_path = None
+                                chair_path = None
+
+                                locked_object = None
+                                object_goal = None
+
+                                goal_x = None
+                                goal_y = None
+
+                                robot_mode = "PLANNING"
 
                     else:
-                        if chairs:
+
+                        lost_counter = 0
+
+                        # First chair detection
+                        if locked_object is None:
+
+                            locked_object = max(
+                                chairs,
+                                key=lambda d: d["confidence"]
+                            )
+
+                            chair_found_this_frame = True
+
+                            print("locked onto chair")
+
+
+                        # Track existing chair
+                        else:
+
                             old_bbox = locked_object["bbox"]
 
-                            old_center = ((old_bbox[0] + old_bbox[2]) / 2, (old_bbox[1] + old_bbox[3]) / 2)
+                            old_center = (
+                                (old_bbox[0] + old_bbox[2]) / 2,
+                                (old_bbox[1] + old_bbox[3]) / 2
+                            )
 
                             best_score = -float("inf")
                             best_chair = None
@@ -662,37 +767,112 @@ if __name__ == "__main__":
 
                                 bbox = chair["bbox"]
 
-                                center = ((bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2)
+                                center = (
+                                    (bbox[0] + bbox[2]) / 2,
+                                    (bbox[1] + bbox[3]) / 2
+                                )
 
-                                distance = np.sqrt((center[0] - old_center[0])**2 + (center[1] - old_center[1])**2)
+                                distance = np.sqrt(
+                                    (center[0] - old_center[0])**2 +
+                                    (center[1] - old_center[1])**2
+                                )
 
-                                score = (0.7 * chair["confidence"] - 0.3 * (distance / 500))
+                                score = (
+                                    0.7 * chair["confidence"]
+                                    - 0.3 * (distance / 500)
+                                )
 
                                 if score > best_score:
                                     best_score = score
                                     best_chair = chair
 
                             if best_chair is not None:
+
                                 locked_object = best_chair
+                                chair_found_this_frame = True
 
-                    if locked_object is not None:
 
-                        x1, y1, x2, y2 = map(int, locked_object["bbox"])
+                    # ==========================
+                    # PROCESS LOCKED CHAIR
+                    # ==========================
 
-                        cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (0,0,255), 3)
+                    if locked_object is not None and chair_found_this_frame:
 
-                        cv2.putText(annotated_frame, "LOCKED CHAIR", (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,0,255), 2)
+                        x1, y1, x2, y2 = map(
+                            int,
+                            locked_object["bbox"]
+                        )
+
+                        cv2.rectangle(
+                            annotated_frame,
+                            (x1, y1),
+                            (x2, y2),
+                            (0,0,255),
+                            3
+                        )
+
+                        cv2.putText(
+                            annotated_frame,
+                            "LOCKED CHAIR",
+                            (x1, y1-10),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.7,
+                            (0,0,255),
+                            2
+                        )
+
 
                         camera_points = lidar_to_camera_optical(lidar_points)
 
-                        pixels, valid = project_camera_to_pixel(camera_points)
+                        pixels, valid = project_camera_to_pixel(
+                            camera_points
+                        )
 
-                        chair_points = get_points_in_bbox(camera_points, pixels, valid, locked_object["bbox"])
+
+                        width = x2 - x1
+                        height = y2 - y1
+
+                        core_x1 = x1 + (width * 0.35)
+                        core_x2 = x2 - (width * 0.35)
+
+                        core_y1 = y1 + (height * 0.10)
+                        core_y2 = y1 + (height * 0.40)
+
+                        core_bbox = [
+                            core_x1,
+                            core_y1,
+                            core_x2,
+                            core_y2
+                        ]
+
+
+                        cv2.rectangle(
+                            annotated_frame,
+                            (int(core_x1), int(core_y1)),
+                            (int(core_x2), int(core_y2)),
+                            (0,255,0),
+                            2
+                        )
+
+
+                        chair_points = get_points_in_bbox(
+                            camera_points,
+                            pixels,
+                            valid,
+                            core_bbox
+                        )
+
 
                         if len(chair_points) > 0:
-                            chair_position_camera = np.median(chair_points, axis=0)
 
-                            chair_position_robot = optical_to_robot(chair_position_camera)
+                            chair_position_camera = np.median(
+                                chair_points,
+                                axis=0
+                            )
+
+                            chair_position_robot = optical_to_robot(
+                                chair_position_camera
+                            )
 
                             chair_position_world = robot_to_world(
                                 chair_position_robot,
@@ -700,35 +880,191 @@ if __name__ == "__main__":
                                 robot_rpy
                             )
 
-                            new_goal_x = chair_position_world[0]
-                            new_goal_y = chair_position_world[1]
 
-                            if goal_x is None:
-                                goal_x = new_goal_x
-                                goal_y = new_goal_y
-                            else:
-                                goal_x = 0.9 * goal_x + 0.1 * new_goal_x
-                                goal_y = 0.9 * goal_y + 0.1 * new_goal_y
+                            goal_x = chair_position_world[0]
+                            goal_y = chair_position_world[1]
+
 
                             goal_grid_x, goal_grid_y = world_to_grid(
                                 np.array([[goal_x, goal_y]])
                             )
 
+
                             if len(goal_grid_x) > 0:
-                                object_goal = (goal_grid_y[0], goal_grid_x[0])
+
+                                object_goal = (
+                                    goal_grid_y[0],
+                                    goal_grid_x[0]
+                                )
+
+
+                                # SWITCH TO NEW MODE
+                                if robot_mode != "GOAL":
+
+                                    print("Switching to GOAL mode")
+
+                                    active_path = None
+                                    current_path = None
+
+                                    robot_mode = "GOAL"
+
+
                             else:
+
                                 print("chair is outside map")
 
-                    cv2.imshow("YOLO Camera", annotated_frame)
 
-            if USE_CV2 and current_goal is not None and goal_x is not None and goal_y is not None:
+                    cv2.imshow(
+                        "YOLO Camera",
+                        annotated_frame
+                    )
 
-                display_path = active_path if robot_mode == "EXECUTING" else current_path
-                display_goal = active_goal if robot_mode == "EXECUTING" else current_goal
+            elif robot_mode == "GOAL":
+
+                if active_path is None:
+
+                    rx_grid, ry_grid = world_to_grid(robot_position[:2].reshape(1, 2))
+
+                    if len(rx_grid) > 0:
+
+                        robot_grid_cell = (ry_grid[0], rx_grid[0])
+
+                        reachable_set, parent_map, cost_map = exploration.compute_reachability(
+                            occupancy_grid,
+                            robot_grid_cell,
+                            resolution=RESOLUTION
+                        )
+
+                        new_path = exploration.plan_path(
+                            occupancy_grid,
+                            goal=object_goal,
+                            parent_map=parent_map,
+                            reachable_set=reachable_set
+                        )
+
+                        if new_path:
+                            active_path = new_path.copy()
+                            chair_path = new_path.copy()
+                            path_index = min(10, len(active_path)-1)
+
+                            print("GOAL path planned")
+
+
+                # ---------- FOLLOW OBJECT PATH ----------
+                if active_path:
+
+                    next_cell = active_path[min(path_index, len(active_path)-1)]
+
+                    target_x = (next_cell[1] + 0.5) * RESOLUTION + ORIGIN_X
+                    target_y = (next_cell[0] + 0.5) * RESOLUTION + ORIGIN_Y
+
+                    dx = target_x - robot_position[0]
+                    dy = target_y - robot_position[1]
+
+                    distance_to_waypoint = np.sqrt(dx**2 + dy**2)
+
+
+                    # move to next waypoint
+                    if distance_to_waypoint < 0.25:
+
+                        if path_index < len(active_path)-1:
+                            path_index += 5
+                            print("goal path index:", path_index)
+
+                        else:
+                            print("Reached object path")
+                            stop(client)
+
+                            active_path = None
+                            object_goal = None
+                            locked_object = None
+
+                            robot_mode = "PLANNING"
+
+                            continue
+
+
+                    # ---------- CONTROL ----------
+                    target_yaw = np.arctan2(dy, dx)
+
+                    yaw_error = np.arctan2(
+                        np.sin(target_yaw - robot_rpy[2]),
+                        np.cos(target_yaw - robot_rpy[2])
+                    )
+
+
+                    if abs(yaw_error) > 1.0:
+
+                        vx = 0.0
+                        vy = 0.0
+                        vyaw = np.clip(
+                            yaw_error,
+                            -TURN_SPEED,
+                            TURN_SPEED
+                        )
+
+                    else:
+
+                        vx = FORWARD_SPEED
+                        vy = 0.0
+                        vyaw = np.clip(
+                            yaw_error,
+                            -TURN_SPEED,
+                            TURN_SPEED
+                        )
+
+
+                    move(client, vx, vy, vyaw)
+
+
+                    print(
+                        f"GOAL executing | "
+                        f"path index:{path_index} "
+                        f"x:{robot_position[0]:.2f} "
+                        f"y:{robot_position[1]:.2f} "
+                        f"yaw:{robot_rpy[2]:.2f} "
+                        f"vx:{vx:.2f} "
+                        f"vyaw:{vyaw:.2f}"
+                    )
+
+            if USE_CV2 and goal_x is not None and goal_y is not None:
+
+                if robot_mode == "GOAL":
+                    display_path = None
+                    display_goal = None
+
+                elif robot_mode == "EXECUTING":
+                    display_path = active_path
+                    display_goal = active_goal
+
+                else:
+                    display_path = current_path
+                    display_goal = current_goal
+
 
                 if loop_count % MAP_EVERY == 0:
-                    exploration.plot_cv2(display_goal, goal_x, goal_y, display_path, trajectory_points, robot_position, robot_rpy, vx, vy, vyaw, RESOLUTION, ORIGIN_X, ORIGIN_Y, frontier_cells, frontier_clusters, occupancy_grid, path_index, start_position)
-        #plot_grid(occupancy_grid, trajectory_points, ORIGIN_X, ORIGIN_Y)
+                    exploration.plot_cv2(
+                        display_goal,
+                        goal_x,
+                        goal_y,
+                        display_path,
+                        trajectory_points,
+                        robot_position,
+                        robot_rpy,
+                        vx,
+                        vy,
+                        vyaw,
+                        RESOLUTION,
+                        ORIGIN_X,
+                        ORIGIN_Y,
+                        frontier_cells,
+                        frontier_clusters,
+                        occupancy_grid,
+                        path_index,
+                        start_position,
+                        chair_path=chair_path
+                    )       
+             #plot_grid(occupancy_grid, trajectory_points, ORIGIN_X, ORIGIN_Y)
 
     except KeyboardInterrupt:
         print("interruption")

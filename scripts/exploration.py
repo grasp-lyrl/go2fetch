@@ -295,7 +295,7 @@ def plot_mat(best_goal, goal_x, goal_y, path, path_xs, path_ys, trajectory_point
 
     ax.set_xlim(dynamic_min_x, ORIGIN_X + (occupancy_grid.shape[1] * RESOLUTION))
 
-def plot_cv2(best_goal, goal_x, goal_y, path, trajectory_points, robot_position, robot_rpy, vx, vy, vyaw, RESOLUTION, ORIGIN_X, ORIGIN_Y, frontier_cells, frontier_clusters, occupancy_grid, path_index, start_position, end_position=None, run=None, save=False):
+def plot_cv2(best_goal, goal_x, goal_y, path, trajectory_points, robot_position, robot_rpy, vx, vy, vyaw, RESOLUTION, ORIGIN_X, ORIGIN_Y, frontier_cells, frontier_clusters, occupancy_grid, path_index, start_position, end_position=None, run=None, save=False, chair_path=None):
 
     WINDOW_NAME = "Exploration Pipeline - OpenCV Live View"
 
@@ -375,6 +375,25 @@ def plot_cv2(best_goal, goal_x, goal_y, path, trajectory_points, robot_position,
             (255, 0, 255),
             -1
         )
+
+    if chair_path is not None:
+        for i in range(len(chair_path)-1):
+            r1, c1 = chair_path[i]
+            r2, c2 = chair_path[i+1]
+
+            x1 = int((c1 + 0.5) * RESOLUTION + ORIGIN_X)
+            y1 = int((r1 + 0.5) * RESOLUTION + ORIGIN_Y)
+
+            x2 = int((c2 + 0.5) * RESOLUTION + ORIGIN_X)
+            y2 = int((r2 + 0.5) * RESOLUTION + ORIGIN_Y)
+
+            cv2.line(
+                display_img,
+                (x1, y1),
+                (x2, y2),
+                (0, 0, 255),
+                2
+            )
 
     rc, rr = world_to_grid_pixel(robot_position[0], robot_position[1])
     cv2.rectangle(display_img, (rc - 3, rr - 3), (rc + 3, rr + 3), (200, 0, 0), -1)
