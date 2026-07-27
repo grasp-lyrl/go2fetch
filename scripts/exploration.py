@@ -1,11 +1,6 @@
 import numpy as np
-import matplotlib.pyplot as plt
-import numpy as np
-import os
-from collections import deque
 import heapq
 import cv2
-from matplotlib.patches import Rectangle
 
 
 #outputs list of coordinates [(x,y),(x,y)...] each (x,y) being a frontier cell
@@ -40,36 +35,7 @@ def detect_frontiers_cv2(grid_array, robot_grid_cell, resolution=0.05, radius_m=
     return frontier_cells
 
 
-#plt visual stuff
-def visualize_grid(grid_array, origin_x, origin_y, frontier_cells, resolution=0.05):
-    plt.clf() 
-    
-    display_img = np.zeros((grid_array.shape[0], grid_array.shape[1], 3), dtype=np.uint8)
-
-    display_img[grid_array > 0] = [0, 0, 0]      
-    display_img[grid_array < 0] = [255, 255, 255] 
-    display_img[grid_array == 0] = [147, 147, 147]
-    
-    rows, cols = grid_array.shape
-    x_min = origin_x
-    x_max = origin_x + (cols * resolution)
-    y_min = origin_y
-    y_max = origin_y + (rows * resolution)
-    
-    plt.imshow(display_img, origin="lower", extent=[x_min, x_max, y_min, y_max])
- 
-    if frontier_cells:
-        frontier_xs = [(cell[1] * resolution) + origin_x for cell in frontier_cells]
-        frontier_ys = [(cell[0] * resolution) + origin_y for cell in frontier_cells]
-        
-        plt.scatter(frontier_xs, frontier_ys, c='cyan', s=2, label='Frontiers', zorder=2)
-        
-    plt.xlabel("X (meters)")
-    plt.ylabel("Y (meters)")
-    plt.title("Exploration Pipeline: Frontier Detection")
-
-
-def compute_reachability(grid_array, start, inflation_radius=0, resolution=0.05, radius_m=10.0):
+def compute_reachability(grid_array, start, resolution=0.05, radius_m=10.0, robot_radius_m=0.45):
     rows, cols = grid_array.shape
     r_start, c_start = start
 
@@ -80,24 +46,23 @@ def compute_reachability(grid_array, start, inflation_radius=0, resolution=0.05,
     c_min = max(0, c_start - radius_pixels)
     c_max = min(cols, c_start + radius_pixels + 1)
 
-    blocked_mask = (grid_array >= 8)
+    k = max(1, int(round(robot_radius_m / resolution)))
+    blocked_mask = cv2.dilate(
+        (grid_array >= 8).astype(np.uint8),
+        np.ones((2 * k + 1, 2 * k + 1), np.uint8),
+    ).astype(bool)
+    # Always leave a small disk around the robot so planning can start.
+    clear_r = max(2, int(round(0.30 / resolution)))
+    r0 = max(0, r_start - clear_r)
+    r1 = min(rows, r_start + clear_r + 1)
+    c0 = max(0, c_start - clear_r)
+    c1 = min(cols, c_start + clear_r + 1)
+    yy, xx = np.ogrid[r0:r1, c0:c1]
+    blocked_mask[r0:r1, c0:c1] &= ((yy - r_start) ** 2 + (xx - c_start) ** 2) > clear_r ** 2
 
-    if inflation_radius > 0:
-        inflated_mask = blocked_mask.copy()
-
-        wall_rows, wall_cols = np.where(grid_array >= 8)
-
-        for r_global, c_global in zip(wall_rows, wall_cols):
-            r_low = max(0, r_global - inflation_radius)
-            r_high = min(rows, r_global + inflation_radius + 1)
-            c_low = max(0, c_global - inflation_radius)
-            c_high = min(cols, c_global + inflation_radius + 1)
-
-            inflated_mask[r_low:r_high, c_low:c_high] = True
-    else:
-        inflated_mask = blocked_mask
-
-    inflated_mask[start[0], start[1]] = False
+    occ = blocked_mask.astype(np.int32, copy=False)
+    integ = np.zeros((rows + 1, cols + 1), dtype=np.int32)
+    integ[1:, 1:] = occ.cumsum(axis=0).cumsum(axis=1)
 
     queue = [(0, start)]
 
@@ -115,9 +80,6 @@ def compute_reachability(grid_array, start, inflation_radius=0, resolution=0.05,
     while queue:
         current_cost, current = heapq.heappop(queue)
 
-        if current not in cost_map:
-            continue
-
         if current_cost > cost_map[current]:
             continue
 
@@ -128,28 +90,26 @@ def compute_reachability(grid_array, start, inflation_radius=0, resolution=0.05,
             if not (r_min <= nr < r_max and c_min <= nc < c_max):
                 continue
 
-            if grid_array[nr, nc] > -8:
+            near_robot = (nr - r_start) ** 2 + (nc - c_start) ** 2 <= clear_r ** 2
+            if grid_array[nr, nc] > -8 and not near_robot:
                 continue
 
-            if inflated_mask[nr, nc]:
+            if blocked_mask[nr, nc]:
                 continue
 
-            if dr != 0 and dc != 0:
+            if dr != 0 and dc != 0 and not near_robot:
                 if grid_array[current[0] + dr, current[1]] > -8:
                     continue
                 if grid_array[current[0], current[1] + dc] > -8:
                     continue
 
             neighbor = (nr, nc)
-            obstacle_penalty = 0
-
-            for rr in range(max(0, nr-7), min(rows, nr+6)):
-                for cc in range(max(0, nc-7), min(cols, nc+6)):
-                    if inflated_mask[rr, cc]:
-                        obstacle_penalty += 3
-
-            obstacle_penalty = obstacle_penalty ** 2
-
+            r0 = max(0, nr - 7)
+            r1 = min(rows, nr + 6)
+            c0 = max(0, nc - 7)
+            c1 = min(cols, nc + 6)
+            count = integ[r1, c1] - integ[r0, c1] - integ[r1, c0] + integ[r0, c0]
+            obstacle_penalty = (3 * int(count)) ** 2
 
             if dr != 0 and dc != 0:
                 new_cost = cost_map[current] + 1.414 + obstacle_penalty
@@ -229,277 +189,191 @@ def cluster_frontiers_cv2(grid_array, frontier_cells, reachable_set, cost_map, r
             'cells': cluster_cells,
             'size': len(cluster_cells),
             'center': center_cell,
-            'distance': cost_map[center_cell],
             'cost': cost_map[center_cell],
-            'reachable': True
         })
 
     return valid_clusters
 
 #outputs list of coordinates [(start_x, start_y)...(end_x, end_y)] of BFS path to goal cluster
-def plan_path(grid_array, goal, parent_map, reachable_set):
+def plan_path(goal, parent_map, reachable_set):
 
     if goal not in reachable_set:
         return None
 
     path = []
-
     current = goal
-
     while current is not None:
         path.append(current)
         current = parent_map[current]
-
     path.reverse()
-
     return path
 
-def plot_mat(best_goal, goal_x, goal_y, path, path_xs, path_ys, trajectory_points, robot_position, RESOLUTION, ORIGIN_X, ORIGIN_Y, selected_scat, goal_scat, path_line, trajectory_line, robot_marker, occupancy_grid):
-    goal_cells = best_goal['cells']
-    cluster_xs = [((cell[1] + 0.5) * RESOLUTION) + ORIGIN_X for cell in goal_cells]
-    cluster_ys = [((cell[0] + 0.5) * RESOLUTION) + ORIGIN_Y for cell in goal_cells]
-    selected_scat.set_offsets(np.c_[cluster_xs, cluster_ys])
-    goal_scat.set_offsets(np.c_[[goal_x], [goal_y]])
-    
-    if path:
-        path_xs = [((wp[1] + 0.5) * RESOLUTION) + ORIGIN_X for wp in path]
-        path_ys = [((wp[0] + 0.5) * RESOLUTION) + ORIGIN_Y for wp in path]
-    path_line.set_data(path_xs, path_ys)
 
-    if len(trajectory_points) > 0:
-        traj_np = np.array(trajectory_points)
-        trajectory_line.set_data(traj_np[:, 0], traj_np[:, 1])
-    
-    robot_marker.set_offsets(np.c_[[robot_position[0]], [robot_position[1]]])
+def nearest_reachable(goal, reachable_set):
+    if not reachable_set:
+        return None
+    if goal in reachable_set:
+        return goal
+    gr, gc = goal
+    return min(reachable_set, key=lambda c: (c[0] - gr) ** 2 + (c[1] - gc) ** 2)
 
-    ax = robot_marker.axes
-    box_width = 20.0
-    box_height = 20.0
-    rect_x = robot_position[0] - (box_width / 2.0)
-    rect_y = robot_position[1] - (box_height / 2.0)
+def plot_cv2(best_goal, goal_x, goal_y, path, trajectory_points, robot_position, vyaw, RESOLUTION, ORIGIN_X, ORIGIN_Y, frontier_cells, frontier_clusters, occ_canvas, path_index, start_position, end_position=None, run=None, save=False, chair_path=None, stop_radius_m=None, chair_xy=None):
+    rows, cols = occ_canvas.shape[:2]
+    view = occ_canvas.copy()
 
-    if not hasattr(ax, 'bounds_rect'):
-        ax.bounds_rect = Rectangle(
-            (rect_x, rect_y), box_width, box_height, 
-            linewidth=1.5, edgecolor='red', facecolor='none', linestyle='--', zorder=10
-        )
-        ax.add_patch(ax.bounds_rect)
-    else:
-        ax.bounds_rect.set_xy((rect_x, rect_y))
+    FREE = (255, 255, 255)
+    UNKNOWN = (127, 127, 127)
+    OCCUPIED = (0, 0, 0)
+    FRONTIER = (207, 190, 23)
+    CLUSTER = (14, 127, 255)
+    GOAL_CLUSTER = (189, 103, 148)
+    PATH = (255, 144, 30)
+    TRAJECTORY = (180, 119, 31)
+    CHAIR_PATH = (194, 119, 227)
+    WAYPOINT = (0, 255, 255)
+    ROBOT = (255, 128, 0)
+    START = (44, 160, 44)
+    GOAL = (40, 39, 214)
+    CHAIR = (0, 255, 0)
 
-    if len(trajectory_points) > 0:
-        traj_np = np.array(trajectory_points)
-        dynamic_min_x = np.min(traj_np[:, 0]) - 1.5
-    else:
-        dynamic_min_x = -1.5
+    if frontier_cells:
+        rr, cc = zip(*frontier_cells)
+        view[rows - 1 - np.fromiter(rr, np.int32, len(rr)), np.fromiter(cc, np.int32, len(cc))] = FRONTIER
 
-    ax.set_xlim(dynamic_min_x, ORIGIN_X + (occupancy_grid.shape[1] * RESOLUTION))
+    if best_goal is not None and "cells" in best_goal:
+        rr, cc = zip(*best_goal["cells"])
+        view[rows - 1 - np.fromiter(rr, np.int32, len(rr)), np.fromiter(cc, np.int32, len(cc))] = GOAL_CLUSTER
+    elif best_goal is not None and "center" in best_goal:
+        r, c = best_goal["center"]
+        view[rows - 1 - r, c] = GOAL_CLUSTER
 
-def plot_cv2(best_goal, goal_x, goal_y, path, trajectory_points, robot_position, robot_rpy, vx, vy, vyaw, RESOLUTION, ORIGIN_X, ORIGIN_Y, frontier_cells, frontier_clusters, occupancy_grid, path_index, start_position, end_position=None, run=None, save=False, chair_path=None):
+    def world_to_grid(x, y):
+        return int((x - ORIGIN_X) / RESOLUTION), int((y - ORIGIN_Y) / RESOLUTION)
 
-    WINDOW_NAME = "Exploration Pipeline - OpenCV Live View"
-
-    grid = occupancy_grid 
-    raw_frontiers = frontier_cells
-    clusters = frontier_clusters
-    
-    grid_color = np.zeros((grid.shape[0], grid.shape[1], 3), dtype=np.uint8)
-    grid_color[grid >= 8] = [0, 0, 0]  
-    grid_color[grid <= -8] = [255, 255, 255]   
-    grid_color[(grid > -8) & (grid < 8)] = [147, 147, 147] 
-
-    display_img = grid_color.copy()
-
-    def world_to_grid_pixel(x, y):
-        col = int((x - ORIGIN_X) / RESOLUTION)
-        row = int((y - ORIGIN_Y) / RESOLUTION)
-        return col, row
+    def to_view(c, r):
+        return int(c), int(rows - 1 - r)
 
     if len(trajectory_points) > 1:
-        for i in range(len(trajectory_points) - 1):
-            pt1 = trajectory_points[i]
-            pt2 = trajectory_points[i+1]
-            c1, r1 = world_to_grid_pixel(pt1[0], pt1[1])
-            c2, r2 = world_to_grid_pixel(pt2[0], pt2[1])
-            cv2.line(display_img, (c1, r1), (c2, r2), (180, 50, 50), 1)
+        pts = [
+            to_view(*world_to_grid(p[0], p[1]))
+            for p in trajectory_points
+        ]
+        cv2.polylines(view, [np.asarray(pts, dtype=np.int32)], False, TRAJECTORY, 2, cv2.LINE_AA)
 
-    if raw_frontiers:
-        for cell in raw_frontiers:
-            r, c = cell
-            display_img[r, c] = [255, 255, 0] 
+    if frontier_clusters:
+        for cl in frontier_clusters:
+            cr, cc = cl["center"]
+            cv2.circle(view, to_view(cc, cr), 4, CLUSTER, -1, cv2.LINE_AA)
 
-    if clusters:
-        for cl in clusters:
-            cr, cc = cl['center']
-            cv2.circle(display_img, (cc, cr), 2, (0, 140, 255), -1) 
-
-    if best_goal is not None:
-
-        if "cells" in best_goal:
-            for cell in best_goal["cells"]:
-                r, c = cell
-                display_img[r, c] = [255, 0, 255]
-
-        elif "center" in best_goal:
-            r, c = best_goal["center"]
-            display_img[r, c] = [255, 0, 255]
-
-        elif isinstance(best_goal, tuple):
-            r, c = best_goal
-            display_img[r, c] = [255, 0, 255]
-
-
-        if goal_x is not None and goal_y is not None:
-            gc, gr = world_to_grid_pixel(goal_x, goal_y)
-            
-            cv2.line(display_img, (gc - 5, gr - 5), (gc + 5, gr + 5), (0, 0, 0), 4)
-            cv2.line(display_img, (gc - 5, gr + 5), (gc + 5, gr - 5), (0, 0, 0), 4)
-            
-            cv2.line(display_img, (gc - 4, gr - 4), (gc + 4, gr + 4), (0, 255, 255), 2)
-            cv2.line(display_img, (gc - 4, gr + 4), (gc + 4, gr - 4), (0, 255, 255), 2)
+    if goal_x is not None and goal_y is not None:
+        gc, gr = world_to_grid(goal_x, goal_y)
+        x, y = to_view(gc, gr)
+        if stop_radius_m is not None and stop_radius_m > 0:
+            radius_px = max(1, int(round(stop_radius_m / RESOLUTION)))
+            cv2.circle(view, (x, y), radius_px, GOAL, 2, cv2.LINE_AA)
+        cv2.line(view, (x - 8, y - 8), (x + 8, y + 8), (0, 0, 0), 3, cv2.LINE_AA)
+        cv2.line(view, (x - 8, y + 8), (x + 8, y - 8), (0, 0, 0), 3, cv2.LINE_AA)
+        cv2.line(view, (x - 7, y - 7), (x + 7, y + 7), GOAL, 2, cv2.LINE_AA)
+        cv2.line(view, (x - 7, y + 7), (x + 7, y - 7), GOAL, 2, cv2.LINE_AA)
 
     if path and len(path) > 1:
-        for i in range(len(path) - 1):
-            r1, c1 = path[i]
-            r2, c2 = path[i+1]
-            cv2.line(display_img, (c1, r1), (c2, r2), (255, 0, 0), 2) 
+        pts = np.asarray([to_view(c, r) for r, c in path], dtype=np.int32)
+        cv2.polylines(view, [pts], False, PATH, 2, cv2.LINE_AA)
 
     if path is not None and len(path) > 0:
+        tr, tc = path[min(path_index, len(path) - 1)]
+        cv2.circle(view, to_view(tc, tr), 7, WAYPOINT, -1, cv2.LINE_AA)
 
-        target_row, target_col = path[min(path_index, len(path)-1)]
+    if chair_path is not None and len(chair_path) > 1:
+        pts = np.asarray([to_view(c, r) for r, c in chair_path], dtype=np.int32)
+        cv2.polylines(view, [pts], False, CHAIR_PATH, 2, cv2.LINE_AA)
 
-        cv2.circle(
-            display_img,
-            (target_col, target_row),
-            6,
-            (255, 0, 255),
-            -1
-        )
+    if chair_xy is not None:
+        cc, cr = world_to_grid(float(chair_xy[0]), float(chair_xy[1]))
+        cx, cy = to_view(cc, cr)
+        cv2.line(view, (cx - 10, cy - 10), (cx + 10, cy + 10), (0, 0, 0), 4, cv2.LINE_AA)
+        cv2.line(view, (cx - 10, cy + 10), (cx + 10, cy - 10), (0, 0, 0), 4, cv2.LINE_AA)
+        cv2.line(view, (cx - 9, cy - 9), (cx + 9, cy + 9), CHAIR, 2, cv2.LINE_AA)
+        cv2.line(view, (cx - 9, cy + 9), (cx + 9, cy - 9), CHAIR, 2, cv2.LINE_AA)
 
-    if chair_path is not None:
-        for i in range(len(chair_path)-1):
-            r1, c1 = chair_path[i]
-            r2, c2 = chair_path[i+1]
-
-            x1 = int((c1 + 0.5) * RESOLUTION + ORIGIN_X)
-            y1 = int((r1 + 0.5) * RESOLUTION + ORIGIN_Y)
-
-            x2 = int((c2 + 0.5) * RESOLUTION + ORIGIN_X)
-            y2 = int((r2 + 0.5) * RESOLUTION + ORIGIN_Y)
-
-            cv2.line(
-                display_img,
-                (x1, y1),
-                (x2, y2),
-                (0, 0, 255),
-                2
-            )
-
-    rc, rr = world_to_grid_pixel(robot_position[0], robot_position[1])
-    cv2.rectangle(display_img, (rc - 3, rr - 3), (rc + 3, rr + 3), (200, 0, 0), -1)
+    rc, rr = world_to_grid(robot_position[0], robot_position[1])
+    rx, ry = to_view(rc, rr)
+    cv2.rectangle(view, (rx - 4, ry - 4), (rx + 4, ry + 4), ROBOT, -1)
 
     if start_position is not None:
-        sc, sr = world_to_grid_pixel(start_position[0], start_position[1])
-
-        cv2.circle(display_img, (sc, sr), 8, (0, 255, 0), -1)
+        sc, sr = world_to_grid(start_position[0], start_position[1])
+        cv2.circle(view, to_view(sc, sr), 3, START, -1, cv2.LINE_AA)
 
     if end_position is not None:
-        ec, er = world_to_grid_pixel(end_position[0], end_position[1])
+        ec, er = world_to_grid(end_position[0], end_position[1])
+        cv2.circle(view, to_view(ec, er), 8, GOAL, -1, cv2.LINE_AA)
 
-        cv2.circle( display_img, (ec, er), 8, (0, 0, 255), -1)
-
-    rc, rr = world_to_grid_pixel(robot_position[0],robot_position[1])
-
-    yaw = robot_rpy[2]
-
-    scale = 1.0 / RESOLUTION
-
-    dx = goal_x - robot_position[0]
-    dy = goal_y - robot_position[1]
-
-    distance = np.sqrt(dx**2 + dy**2)
-
-    if distance > 0.01:
-
-        arrow_length = 1.0 / RESOLUTION
-
-        end_x = int(rc + (dx / distance) * arrow_length)
-        end_y = int(rr + (dy / distance) * arrow_length)
-
-        cv2.arrowedLine(
-            display_img,
-            (rc, rr),
-            (end_x, end_y),
-            (0,255,0),
-            2,
-            tipLength=0.25
+    dx = goal_x - robot_position[0] if goal_x is not None else 0.0
+    dy = goal_y - robot_position[1] if goal_y is not None else 0.0
+    distance = float(np.hypot(dx, dy))
+    if goal_x is not None and goal_y is not None and distance > 0.01:
+        arrow_len = 1.0 / RESOLUTION
+        end = to_view(
+            int(rc + (dx / distance) * arrow_len),
+            int(rr + (dy / distance) * arrow_len),
         )
+        cv2.arrowedLine(view, (rx, ry), end, GOAL, 2, tipLength=0.25, line_type=cv2.LINE_AA)
 
     if abs(vyaw) > 0.01:
-        radius = 12
-
+        radius = 14
         arc_angle = min(abs(vyaw) * 180, 120)
+        end_angle = arc_angle if vyaw > 0 else -arc_angle
+        cv2.ellipse(view, (rx, ry), (radius, radius), 0, 0, end_angle, ROBOT, 2, cv2.LINE_AA)
 
-        if vyaw > 0:
-            start_angle = 0
-            end_angle = arc_angle
+    cv2.rectangle(view, (0, 0), (cols - 1, rows - 1), (80, 80, 80), 2)
+
+    if save and run is not None:
+        cv2.imwrite(f"{run}/map.png", view)
+
+    legend = [
+        ("patch", FREE, "Free"),
+        ("patch", UNKNOWN, "Unknown"),
+        ("patch", OCCUPIED, "Occupied"),
+        ("patch", FRONTIER, "Frontier"),
+        ("marker", CLUSTER, "Cluster"),
+        ("patch", GOAL_CLUSTER, "Goal cluster"),
+        ("line", PATH, "Path"),
+        ("line", TRAJECTORY, "Trajectory"),
+        ("line", CHAIR_PATH, "Chair path"),
+        ("marker", WAYPOINT, "Waypoint"),
+        ("marker", ROBOT, "Robot"),
+        ("marker", START, "Start"),
+        ("marker", GOAL, "Goal"),
+        ("marker", CHAIR, "Target"),
+        ("line", GOAL, "Reach radius"),
+    ]
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 0.55
+    thickness = 1
+    row_h = 22
+    handle_w = 30
+    pad_x, pad_y = 12, 10
+    gap = 10
+    text_w = max(cv2.getTextSize(label, font, font_scale, thickness)[0][0] for _, _, label in legend)
+    box_w = pad_x * 2 + handle_w + gap + text_w
+    box_h = pad_y * 2 + row_h * len(legend)
+    x0 = view.shape[1] - box_w - 16
+    y0 = 16
+    overlay = view.copy()
+    cv2.rectangle(overlay, (x0, y0), (x0 + box_w, y0 + box_h), (255, 255, 255), -1)
+    cv2.addWeighted(overlay, 0.8, view, 0.2, 0, view)
+    cv2.rectangle(view, (x0, y0), (x0 + box_w, y0 + box_h), (0, 0, 0), 1)
+    for i, (kind, bgr, label) in enumerate(legend):
+        cy = y0 + pad_y + i * row_h + row_h // 2
+        hx0 = x0 + pad_x
+        hx1 = hx0 + handle_w
+        if kind == "patch":
+            cv2.rectangle(view, (hx0, cy - 6), (hx1, cy + 6), bgr, -1)
+            cv2.rectangle(view, (hx0, cy - 6), (hx1, cy + 6), (0, 0, 0), 1)
+        elif kind == "line":
+            cv2.line(view, (hx0, cy), (hx1, cy), bgr, 2, cv2.LINE_AA)
         else:
-            start_angle = 0
-            end_angle = -arc_angle
-
-        cv2.ellipse(
-            display_img,
-            (rc, rr),
-            (radius, radius),
-            0,
-            start_angle,
-            end_angle,
-            (0, 0, 255),
-            2
-        )
-
-        angle = np.deg2rad(end_angle)
-
-        arrow_x = int(rc + radius * np.cos(angle))
-        arrow_y = int(rr + radius * np.sin(angle))
-
-        cv2.arrowedLine(
-            display_img,
-            (arrow_x - 2, arrow_y - 2),
-            (arrow_x, arrow_y),
-            (0, 0, 255),
-            2,
-            tipLength=0.5
-        )
-
-    min_x, max_x = robot_position[0] - 10.0, robot_position[0] + 10.0
-    min_y, max_y = robot_position[1] - 10.0, robot_position[1] + 10.0
-    c_min, r_min = world_to_grid_pixel(min_x, min_y)
-    c_max, r_max = world_to_grid_pixel(max_x, max_y)
-
-    def draw_dashed_line(img, pt1, pt2, color, thickness=1, dash_len=4, gap_len=4):
-        dx, dy = pt2[0] - pt1[0], pt2[1] - pt1[1]
-        dist = np.sqrt(dx**2 + dy**2)
-        if dist == 0: return
-        ux, uy = dx / dist, dy / dist
-        step = dash_len + gap_len
-        for i in range(0, int(dist), step):
-            start_dist = i
-            end_dist = min(i + dash_len, dist)
-            p1 = (int(pt1[0] + start_dist * ux), int(pt1[1] + start_dist * uy))
-            p2 = (int(pt1[0] + end_dist * ux), int(pt1[1] + end_dist * uy))
-            cv2.line(img, p1, p2, color, thickness)
-
-    red_bgr = (0, 0, 255)
-    draw_dashed_line(display_img, (c_min, r_min), (c_max, r_min), red_bgr, 1)
-    draw_dashed_line(display_img, (c_max, r_min), (c_max, r_max), red_bgr, 1)
-    draw_dashed_line(display_img, (c_max, r_max), (c_min, r_max), red_bgr, 1)
-    draw_dashed_line(display_img, (c_min, r_max), (c_min, r_min), red_bgr, 1)
-
-    flipped_display = cv2.flip(display_img, 0)
-    cv2.imshow(WINDOW_NAME, flipped_display)
-
-    if save:
-        cv2.imwrite(f"{run}/map.png", flipped_display)
-
-    cv2.waitKey(1)
+            cv2.circle(view, ((hx0 + hx1) // 2, cy), 5, bgr, -1, cv2.LINE_AA)
+            cv2.circle(view, ((hx0 + hx1) // 2, cy), 5, (0, 0, 0), 1, cv2.LINE_AA)
+        cv2.putText(view, label, (hx1 + gap, cy + 5), font, font_scale, (0, 0, 0), thickness, cv2.LINE_AA)
+    return view

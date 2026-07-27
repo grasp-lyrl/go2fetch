@@ -34,6 +34,12 @@ def stop(client):
     return client.StopMove()
 
 
+def sit(client):
+    client.StopMove()
+    time.sleep(0.2)
+    return client.Sit()
+
+
 def free_avoid(client, enabled):
     return client.FreeAvoid(enabled)
 
