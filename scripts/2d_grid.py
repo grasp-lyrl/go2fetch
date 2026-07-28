@@ -240,16 +240,21 @@ def cell_to_world(cell):
 
 
 def pick_frontier(clusters, robot_xy, yaw):
-    """Farthest reachable frontier ahead; if none ahead, farthest overall."""
     ahead = []
+
     for c in clusters:
         gx, gy = cell_to_world(c["center"])
+
         bearing = np.arctan2(gy - robot_xy[1], gx - robot_xy[0])
-        err = abs(np.arctan2(np.sin(bearing - yaw), np.cos(bearing - yaw)))
-        if err < np.pi / 2:
+
+        yaw_error = abs(np.arctan2(np.sin(bearing - yaw), np.cos(bearing - yaw)))
+
+        if yaw_error < np.pi / 2:
             ahead.append(c)
-    pool = ahead if ahead else clusters
-    return max(pool, key=lambda c: c["cost"])
+
+    pool = ahead if len(ahead) >= 3 else clusters
+
+    return max(pool, key=lambda c: (0.4 * c["size"] - 0.6 * c["cost"]))
 
 
 def path_blocked(grid, path, idx):
@@ -527,7 +532,7 @@ if __name__ == "__main__":
                     if current_path:
                         active_path = current_path.copy()
                         active_goal = current_goal
-                        path_index = 0
+                        path_index = min(10, len(active_path)-1)
                         robot_mode = "EXECUTING"
                         print("Control: enabled")
                     else:
@@ -572,42 +577,155 @@ if __name__ == "__main__":
                 continue
 
             if robot_mode == "PLANNING":
+
                 frame_count += 1
-                if frame_count % 10 == 0 or (
-                    not initial_path_planned and frame_count % 5 == 0
-                ):
-                    planned = plan_frontiers(
-                        occupancy_grid, robot_position, robot_rpy[2]
-                    )
-                    if planned is not None:
-                        frontier_cells, frontier_clusters, goal, path = planned
-                        if goal is not None and path and len(path) >= MIN_EXPLORE_PATH:
-                            current_goal, current_path = goal, path
-                            goal_x, goal_y = cell_to_world(goal["center"])
-                            initial_path_planned = True
-                            if started:
-                                active_path = current_path.copy()
-                                active_goal = current_goal
-                                path_index = 0
-                                print(
-                                    f"Control: path ready ({len(path)} cells) — executing"
-                                )
-                                robot_mode = "EXECUTING"
-                            else:
-                                print("Press Space to enable control.")
-                                robot_mode = "WAITING"
-                        elif started and frame_count % 45 == 0:
-                            print(
-                                f"Explore: waiting for path "
-                                f"(frontiers={len(frontier_cells)}, "
-                                f"clusters={len(frontier_clusters)})"
+
+                if frame_count % 15 == 0:
+
+                    # =====================================================
+                    # OBJECT GOAL HAS PRIORITY
+                    # =====================================================
+
+                    if object_goal is not None:
+
+                        goal_row, goal_col = object_goal
+
+                        goal_x = (goal_col + 0.5) * RESOLUTION + ORIGIN_X
+                        goal_y = (goal_row + 0.5) * RESOLUTION + ORIGIN_Y
+
+                        current_goal = {
+                            "center": object_goal,
+                            "size": 1,
+                            "cost": 0,
+                            "reachable": True
+                        }
+
+                        current_path = exploration.plan_path(
+                            occupancy_grid,
+                            goal=(goal_row, goal_col),
+                            resolution=RESOLUTION
+                        )
+
+                        if current_path:
+
+                            active_path = current_path.copy()
+                            active_goal = current_goal
+
+                            path_index = min(10, len(active_path)-1)
+
+                            print("object path found, starting execution")
+
+                            robot_mode = "EXECUTING"
+
+
+                    # =====================================================
+                    # NORMAL FRONTIER EXPLORATION
+                    # =====================================================
+
+                    else:
+
+                        rx_grid, ry_grid = world_to_grid(
+                            robot_position[:2].reshape(1,2)
+                        )
+
+                        if len(rx_grid) > 0:
+
+                            robot_grid_cell = (
+                                ry_grid[0],
+                                rx_grid[0]
                             )
+
+
+                            reachable_set, parent_map, cost_map = exploration.compute_reachability(
+                                occupancy_grid,
+                                robot_grid_cell,
+                                resolution=RESOLUTION
+                            )
+
+
+                            frontier_cells = exploration.detect_frontiers_cv2(
+                                occupancy_grid,
+                                robot_grid_cell,
+                                resolution=RESOLUTION
+                            )
+
+
+                            frontier_clusters = exploration.cluster_frontiers_cv2(
+                                occupancy_grid,
+                                frontier_cells,
+                                reachable_set,
+                                cost_map,
+                                resolution=RESOLUTION
+                            )
+
+
+                            reachable_clusters = [
+                                c for c in frontier_clusters
+                                if c.get("reachable", True)
+                            ]
+
+
+                            if reachable_clusters:
+
+                                current_goal = max(
+                                    reachable_clusters,
+                                    key=lambda c: (
+                                        0.4*c["size"]
+                                        -
+                                        0.6*c["cost"]
+                                    )
+                                )
+
+
+                                goal_row, goal_col = current_goal["center"]
+
+
+                                goal_x = (
+                                    (goal_col + 0.5)
+                                    *
+                                    RESOLUTION
+                                    +
+                                    ORIGIN_X
+                                )
+
+                                goal_y = (
+                                    (goal_row + 0.5)
+                                    *
+                                    RESOLUTION
+                                    +
+                                    ORIGIN_Y
+                                )
+
+
+                                current_path = exploration.plan_path(
+                                    (goal_row, goal_col),
+                                    parent_map,
+                                    reachable_set
+                                )
+
+
+                                if current_path:
+
+                                    active_path = current_path.copy()
+
+                                    active_goal = current_goal
+
+                                    path_index = min(
+                                        10,
+                                        len(active_path)-1
+                                    )
+
+                                    print(
+                                        "frontier path found, starting execution"
+                                    )
+
+                                    robot_mode = "EXECUTING"
 
             elif robot_mode == "EXECUTING":
                 if not active_path:
                     robot_mode = "PLANNING"
                     continue
-                path_index = nearest_path_index(active_path, robot_position[:2])
+                path_index = min(path_index, len(active_path)-1)
                 close = path_blocked(occupancy_grid, active_path, path_index)
                 front = obstacle_ahead(lidar_robot)
                 if close or front:
@@ -622,17 +740,65 @@ if __name__ == "__main__":
                     why = "front lidar" if front else "path clearance"
                     print(f"Explore: obstacle ({why}) — replanning")
                     continue
-                target = explore_target(active_path, robot_position[:2])
-                if target is None:
-                    active_path = active_goal = current_path = None
-                    blocked_streak = 0
-                    robot_mode = "PLANNING"
-                    print("Explore: path done — replanning")
-                    continue
-                path_index, target_x, target_y = target
+
+                next_cell = active_path[min(path_index, len(active_path)-1)]
+
+                target_x = (next_cell[1] + 0.5) * RESOLUTION + ORIGIN_X
+                target_y = (next_cell[0] + 0.5) * RESOLUTION + ORIGIN_Y
+
                 dx = target_x - robot_position[0]
                 dy = target_y - robot_position[1]
-                vx, vy, vyaw = yaw_command(dx, dy, robot_rpy[2], turn_thresh=0.75)
+
+                distance_to_waypoint = np.sqrt(dx**2 + dy**2)
+
+
+                if distance_to_waypoint < 0.25:
+
+                    remaining_cells = len(active_path) - path_index
+
+                    if remaining_cells > 30:
+                        path_index += 5
+                        print("path index:", path_index)
+
+                    else:
+                        active_path = active_goal = current_path = None
+                        blocked_streak = 0
+                        robot_mode = "PLANNING"
+                        print("Explore: path complete — replanning")
+                        continue
+
+
+                # update target after possible path_index change
+                target_x, target_y = cell_to_world(
+                    active_path[min(path_index, len(active_path)-1)]
+                )
+
+                dx = target_x - robot_position[0]
+                dy = target_y - robot_position[1]
+
+                target_yaw = np.arctan2(dy, dx)
+                yaw_error = np.arctan2(
+                    np.sin(target_yaw - robot_rpy[2]),
+                    np.cos(target_yaw - robot_rpy[2])
+                )
+
+                print(
+                    f"EXEC | "
+                    f"path_index:{path_index} "
+                    f"robot_xy:({robot_position[0]:.2f},{robot_position[1]:.2f}) "
+                    f"target_xy:({target_x:.2f},{target_y:.2f}) "
+                    f"robot_yaw:{robot_rpy[2]:.2f} "
+                    f"target_yaw:{target_yaw:.2f} "
+                    f"yaw_error:{yaw_error:.2f}"
+                )
+
+                vx, vy, vyaw = yaw_command(
+                    dx,
+                    dy,
+                    robot_rpy[2],
+                    turn_thresh=0.6
+                )
+
                 move(client, vx, vy, vyaw)
 
             frame = camera.read()
@@ -806,37 +972,85 @@ if __name__ == "__main__":
                             active_path = None
 
                 if active_path:
-                    if path_blocked(occupancy_grid, active_path, path_index):
-                        active_path = None
-                        goal_replan_at = now
-                        print("Goal: path blocked — replanning")
-                        continue
-                    target_x, target_y = cell_to_world(
-                        active_path[min(path_index, len(active_path) - 1)]
-                    )
+
+                    next_cell = active_path[min(path_index, len(active_path)-1)]
+
+                    target_x = (next_cell[1] + 0.5) * RESOLUTION + ORIGIN_X
+                    target_y = (next_cell[0] + 0.5) * RESOLUTION + ORIGIN_Y
+
                     dx = target_x - robot_position[0]
                     dy = target_y - robot_position[1]
-                    if dx * dx + dy * dy < WAYPOINT_REACH_SQ:
-                        if path_index < len(active_path) - 1:
+
+                    distance_to_waypoint = np.sqrt(dx**2 + dy**2)
+
+
+                    # ============================
+                    # WAYPOINT REACHED
+                    # ============================
+                    if distance_to_waypoint < 0.20:
+
+                        remaining_cells = len(active_path) - path_index
+
+                        if remaining_cells > 30:
                             path_index += 5
+                            print("path index:", path_index)
+
                         else:
-                            active_path = None
-                            goal_replan_at = now
-                            if (ad is not None and ad < GOAL_STOP_M * 1.25) or (
-                                chair_dist is not None and chair_dist < GOAL_STOP_M
-                            ):
-                                finish_goal(
-                                    f"Goal: reached "
-                                    f"({(ad if ad is not None else chair_dist):.2f}m)"
-                                )
-                            continue
-                    ref = ad if ad is not None else (
-                        chair_dist if chair_dist is not None else GOAL_SLOW_M
+                            if current_path is not None:
+
+                                active_path = current_path.copy()
+                                active_goal = current_goal
+                                path_index = min(10, len(active_path)-1)
+
+                                current_path = None
+
+                                print("switching to new path")
+
+                            else:
+
+                                stop(client)
+
+                                active_path = None
+                                active_goal = None
+
+                                robot_mode = "PLANNING"
+
+                                print("path finished, replanning")
+
+                        continue
+
+
+                    # ============================
+                    # NORMAL MOVEMENT
+                    # ============================
+
+                    target_yaw = np.arctan2(dy, dx)
+
+                    yaw_error = np.arctan2(
+                        np.sin(target_yaw - robot_rpy[2]),
+                        np.cos(target_yaw - robot_rpy[2])
                     )
-                    speed = FORWARD_SPEED * min(1.0, max(ref, 0.4) / GOAL_SLOW_M)
-                    vx, vy, vyaw = yaw_command(
-                        dx, dy, robot_rpy[2], turn_thresh=0.7, speed=speed
+
+
+                    # rotate while significantly misaligned
+                    if abs(yaw_error) > 1.0:
+
+                        vx = 0.0
+                        vy = 0.0
+
+                    else:
+
+                        vx = FORWARD_SPEED
+                        vy = 0.0
+
+
+                    vyaw = np.clip(
+                        yaw_error,
+                        -TURN_SPEED,
+                        TURN_SPEED
                     )
+
+
                     move(client, vx, vy, vyaw)
 
             if loop_count % MAP_EVERY == 0:

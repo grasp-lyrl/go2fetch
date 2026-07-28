@@ -52,7 +52,7 @@ def compute_reachability(grid_array, start, resolution=0.05, radius_m=10.0, robo
         np.ones((2 * k + 1, 2 * k + 1), np.uint8),
     ).astype(bool)
     # Always leave a small disk around the robot so planning can start.
-    clear_r = max(2, int(round(0.30 / resolution)))
+    clear_r = max(2, int(round(0.40 / resolution)))
     r0 = max(0, r_start - clear_r)
     r1 = min(rows, r_start + clear_r + 1)
     c0 = max(0, c_start - clear_r)
@@ -104,12 +104,12 @@ def compute_reachability(grid_array, start, resolution=0.05, radius_m=10.0, robo
                     continue
 
             neighbor = (nr, nc)
-            r0 = max(0, nr - 7)
-            r1 = min(rows, nr + 6)
-            c0 = max(0, nc - 7)
-            c1 = min(cols, nc + 6)
+            r0 = max(0, nr - 8)
+            r1 = min(rows, nr + 8)
+            c0 = max(0, nc - 8)
+            c1 = min(cols, nc + 8)
             count = integ[r1, c1] - integ[r0, c1] - integ[r1, c0] + integ[r0, c0]
-            obstacle_penalty = (3 * int(count)) ** 2
+            obstacle_penalty = (5 * int(count)) ** 2
 
             if dr != 0 and dc != 0:
                 new_cost = cost_map[current] + 1.414 + obstacle_penalty
