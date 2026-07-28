@@ -5,3 +5,5 @@ __pycache__/
 logs/
 data/*
 *.pt
+*.mp4
+recordings/

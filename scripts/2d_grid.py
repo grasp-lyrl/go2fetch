@@ -1,7 +1,9 @@
 import argparse
 import os
 import sys
+import threading
 import time
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -65,10 +67,13 @@ TURN_SPEED = 1.5
 ROBOT_RADIUS = 0.40  # ~0.8 m opening fits a doorway; larger blocks doors
 CLEARANCE_CHECK_M = 1.0
 BLOCKED_FRAMES = 4
-GOAL_STOP_M = 0.8      # sit this far from the target
+GOAL_STOP_M = 0.75     # sit this far from the target
 GOAL_ARRIVE_M = 0.15   # tolerance on the stand-off point itself
 GOAL_REPLAN_S = 2.0
 GOAL_UPDATE_CELLS = 20
+GOAL_PROGRESS_M = 0.25   # a retry must close at least this much to count
+GOAL_STALL_TRIES = 4     # give up approaching after this many fruitless retries
+TARGET_DEPTH_BAND_M = 0.4  # thickness of the target surface we measure to
 
 _MAP_FREE = (255, 255, 255)
 _MAP_UNKNOWN = (127, 127, 127)
@@ -96,6 +101,10 @@ LIDAR_TO_CAMERA_T = np.array([
     [0.0,        0.0,       0.0,        1.0],
 ])
 
+# Camera origin expressed in the robot frame. Derived from the two extrinsic
+# chains rather than hardcoded: p_robot = O @ p_cam + (t_lidar_robot - O @ t_lidar_cam).
+CAMERA_TO_ROBOT_T = LIDAR_TO_ROBOT_T - OPTICAL_TO_ROBOT_R @ LIDAR_TO_CAMERA_T[:3, 3]
+
 CAMERA_K = np.array([
     [864.39938,   0.0,      639.19798],
     [0.0,       863.73849,  373.28118],
@@ -108,6 +117,7 @@ MAX_RANGE_SQ = MAX_RANGE ** 2
 LOOKAHEAD_M = 1.5
 EXPLORE_REACH_M = 0.7
 MIN_FRONTIER_M = 1.5  # commit to a real trip instead of replanning constantly
+FRONTIER_RADIUS_M = 6.0  # only consider frontiers this close to the robot
 
 # Frontier scoring, all terms in metres so the trade-offs stay readable.
 FRONTIER_SIZE_W = 0.02   # per cell of frontier width
@@ -133,7 +143,7 @@ def lidar_to_robot(points):
 
 
 def optical_to_robot(point):
-    return OPTICAL_TO_ROBOT_R @ point
+    return OPTICAL_TO_ROBOT_R @ point + CAMERA_TO_ROBOT_T
 
 
 def lidar_to_camera_optical(points):
@@ -142,7 +152,9 @@ def lidar_to_camera_optical(points):
 
 
 def project_camera_to_pixel(points):
-    valid = points[:, 2] > 0
+    # MIN_RANGE, not 0: returns off the robot's own body land at tiny depths and
+    # would drag the target's median depth toward zero.
+    valid = points[:, 2] > MIN_RANGE
     pixels = (CAMERA_K @ points[valid].T).T
     pixels[:, 0] /= pixels[:, 2]
     pixels[:, 1] /= pixels[:, 2]
@@ -156,6 +168,14 @@ def get_points_in_bbox(points, pixels, valid, bbox):
         (pixels[:, 1] >= y1) & (pixels[:, 1] <= y2)
     )
     return points[valid][inside]
+
+
+def target_point(points):
+    """Median of the closest lidar returns in the detection box."""
+    depth = points[:, 2]
+    dmin = float(np.min(depth))
+    near = points[depth <= dmin + TARGET_DEPTH_BAND_M]
+    return np.median(near if len(near) > 0 else points, axis=0)
 
 
 def robot_to_world(points, position, rpy):
@@ -403,6 +423,73 @@ def show_dashboard(camera_bgr, map_bgr):
     canvas[:cam.shape[0], :cam.shape[1]] = cam
     canvas[:mp.shape[0], cam.shape[1] + gap:] = mp
     cv2.imshow(DASHBOARD_WINDOW, canvas)
+    return cam, mp
+
+
+class TrialRecorder:
+    """Wall-clock recorder: main loop only swaps frame refs; a daemon thread
+    samples them at fixed FPS so encoding never blocks control."""
+
+    def __init__(self, out_dir, fps=15.0):
+        self.out_dir = out_dir
+        self.fps = fps
+        self._cam = None
+        self._map = None
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        os.makedirs(out_dir, exist_ok=True)
+        self._thread.start()
+        print(f"Recording: {out_dir}/camera.mp4 + map.mp4 @ {fps:.0f} fps")
+
+    def update(self, cam_bgr, map_bgr):
+        with self._lock:
+            if cam_bgr is not None:
+                self._cam = cam_bgr
+            if map_bgr is not None:
+                self._map = map_bgr
+
+    def _writer(self, path, frame, writer, size):
+        h, w = frame.shape[:2]
+        if writer is None or size != (w, h):
+            if writer is not None:
+                writer.release()
+            writer = cv2.VideoWriter(
+                path, cv2.VideoWriter_fourcc(*"mp4v"), self.fps, (w, h),
+            )
+            size = (w, h)
+        writer.write(frame)
+        return writer, size
+
+    def _run(self):
+        cam_w = map_w = None
+        cam_sz = map_sz = None
+        period = 1.0 / self.fps
+        next_t = time.monotonic()
+        while not self._stop.is_set():
+            now = time.monotonic()
+            if now < next_t:
+                time.sleep(min(0.005, next_t - now))
+                continue
+            next_t += period
+            with self._lock:
+                cam, mp = self._cam, self._map
+            if cam is not None:
+                cam_w, cam_sz = self._writer(
+                    os.path.join(self.out_dir, "camera.mp4"), cam, cam_w, cam_sz,
+                )
+            if mp is not None:
+                map_w, map_sz = self._writer(
+                    os.path.join(self.out_dir, "map.mp4"), mp, map_w, map_sz,
+                )
+        if cam_w is not None:
+            cam_w.release()
+        if map_w is not None:
+            map_w.release()
+
+    def close(self):
+        self._stop.set()
+        self._thread.join(timeout=3.0)
 
 
 if __name__ == "__main__":
@@ -419,10 +506,14 @@ if __name__ == "__main__":
     RUN_NAME = "run002"
     SAVE_DIR = f"data/{RUN_NAME}"
     os.makedirs(SAVE_DIR, exist_ok=True)
+    REC_DIR = f"recordings/{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    recorder = TrialRecorder(REC_DIR, fps=15.0)
 
     TARGET_CLASS = "chair"
     YOLO_EVERY = 5
     MAP_EVERY = 5
+    CHASE_STABLE_FRAMES = 50   # consecutive YOLO hits before chase
+    MIN_CHAIR_BBOX_AREA = 35000  # ~190x190 — far boxes are smaller
 
     occupancy_grid, occ_canvas = create_grid()
 
@@ -454,8 +545,11 @@ if __name__ == "__main__":
 
     initial_position = np.array(state_msg.position)
 
-    ORIGIN_X = initial_position[0] - (MAP_WIDTH * RESOLUTION) / 2.0
-    ORIGIN_Y = initial_position[1] - (MAP_HEIGHT * RESOLUTION) / 2.0
+    # Put the start near the upper-left of the canvas so exploration grows
+    # into free space (display flips Y: high world-Y → top of image).
+    MAP_MARGIN_M = 5.0
+    ORIGIN_X = initial_position[0] - MAP_MARGIN_M
+    ORIGIN_Y = initial_position[1] - (MAP_HEIGHT * RESOLUTION) + MAP_MARGIN_M
 
     trajectory_points = []
     frame_count = 14
@@ -472,11 +566,14 @@ if __name__ == "__main__":
     object_goal = None
     locked_object = None
     lost_counter = 0
+    chair_stable = 0
     goal_replan_at = 0.0
     chair_dist = None
     goal_smooth = None
     chair_xy = None
     blocked_streak = 0
+    goal_best_dist = None
+    goal_stalls = 0
 
     goal_x = None
     goal_y = None
@@ -518,6 +615,18 @@ if __name__ == "__main__":
             return None
         return float(np.hypot(goal_x - robot_position[0], goal_y - robot_position[1]))
 
+    def target_dist():
+        """Distance to the target from where the robot is *now*.
+
+        chair_dist is frozen at the moment of the last detection, so it goes
+        stale whenever YOLO misses a frame or the target leaves the view.
+        """
+        if chair_xy is None:
+            return None
+        return float(np.hypot(
+            chair_xy[0] - robot_position[0], chair_xy[1] - robot_position[1]
+        ))
+
     cv2.namedWindow(DASHBOARD_WINDOW, cv2.WINDOW_NORMAL)
     _init_w = int(CAM_H * 16 / 9) + 12 + int(MAP_H * (MAP_WIDTH / MAP_HEIGHT))
     cv2.resizeWindow(DASHBOARD_WINDOW, _init_w, MAP_H)
@@ -539,8 +648,11 @@ if __name__ == "__main__":
                     active_path = active_goal = chair_path = None
                     locked_object = object_goal = None
                     lost_counter = 0
+                    chair_stable = 0
                     chair_dist = goal_smooth = chair_xy = None
                     vx = vy = vyaw = 0.0
+                    goal_best_dist = None
+                    goal_stalls = 0
                     robot_mode = "WAITING"
                     print("Control: disabled — stopped")
                 else:
@@ -585,9 +697,13 @@ if __name__ == "__main__":
                         occ_canvas, robot_position, robot_rpy[2],
                         trajectory_points, None,
                         RESOLUTION, ORIGIN_X, ORIGIN_Y,
-                        target_xy=chair_xy, frontier_cells=frontier_cells,
+                        target_xy=chair_xy,
                     )
-                show_dashboard(latest_camera, latest_map)
+                cam_v, map_v = show_dashboard(latest_camera, latest_map)
+                recorder.update(
+                    cam_v if latest_camera is not None else None,
+                    map_v if latest_map is not None else None,
+                )
                 continue
 
             if robot_mode == "PLANNING":
@@ -639,6 +755,7 @@ if __name__ == "__main__":
                                 occupancy_grid,
                                 robot_grid_cell,
                                 resolution=RESOLUTION,
+                                radius_m=FRONTIER_RADIUS_M,
                                 robot_radius_m=ROBOT_RADIUS
                             )
 
@@ -646,7 +763,8 @@ if __name__ == "__main__":
                             frontier_cells = exploration.detect_frontiers_cv2(
                                 occupancy_grid,
                                 robot_grid_cell,
-                                resolution=RESOLUTION
+                                resolution=RESOLUTION,
+                                radius_m=FRONTIER_RADIUS_M,
                             )
 
 
@@ -655,7 +773,8 @@ if __name__ == "__main__":
                                 frontier_cells,
                                 reachable_set,
                                 cost_map,
-                                resolution=RESOLUTION
+                                resolution=RESOLUTION,
+                                radius_m=FRONTIER_RADIUS_M,
                             )
 
 
@@ -776,23 +895,26 @@ if __name__ == "__main__":
                 latest_camera = annotated_frame
                 chairs = [d for d in detections if d["class"] == TARGET_CLASS]
 
-                if not chairs and locked_object is not None:
-                    lost_counter += 1
-                    if lost_counter > 20:
-                        if robot_mode == "GOAL" and object_goal is not None:
-                            locked_object = None
-                        else:
-                            print(f"{TARGET_CLASS.capitalize()}: lost — exploring")
-                            stop(client)
-                            active_path = current_path = chair_path = None
-                            locked_object = object_goal = None
-                            goal_x = goal_y = None
-                            chair_dist = goal_smooth = chair_xy = None
-                            vx = vy = vyaw = 0.0
-                            robot_mode = "PLANNING"
+                if not chairs:
+                    chair_stable = 0
+                    if locked_object is not None:
+                        lost_counter += 1
+                        if lost_counter > 20:
+                            if robot_mode == "GOAL" and object_goal is not None:
+                                locked_object = None
+                            else:
+                                print(f"{TARGET_CLASS.capitalize()}: lost — exploring")
+                                stop(client)
+                                active_path = current_path = chair_path = None
+                                locked_object = object_goal = None
+                                goal_x = goal_y = None
+                                chair_dist = goal_smooth = chair_xy = None
+                                vx = vy = vyaw = 0.0
+                                robot_mode = "PLANNING"
 
                 elif chairs:
                     lost_counter = 0
+                    chair_stable += 1
                     if locked_object is None:
                         locked_object = max(chairs, key=lambda d: d["confidence"])
                         print(f"{TARGET_CLASS.capitalize()} detected - Locking in!")
@@ -809,90 +931,85 @@ if __name__ == "__main__":
 
                     if locked_object is not None:
                         x1, y1, x2, y2 = map(int, locked_object["bbox"])
+                        w, h = x2 - x1, y2 - y1
                         cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (0, 0, 255), 3)
                         cv2.putText(
-                            annotated_frame, "LOCKED CHAIR", (x1, y1 - 10),
+                            annotated_frame,
+                            f"LOCKED CHAIR {chair_stable}/{CHASE_STABLE_FRAMES}",
+                            (x1, y1 - 10),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2,
                         )
-                        camera_points = lidar_to_camera_optical(lidar_points)
-                        pixels, valid = project_camera_to_pixel(camera_points)
-                        w, h = x2 - x1, y2 - y1
-                        core = [
-                            x1 + w * 0.35, y1 + h * 0.10,
-                            x2 - w * 0.35, y1 + h * 0.40,
-                        ]
-                        cv2.rectangle(
-                            annotated_frame,
-                            (int(core[0]), int(core[1])),
-                            (int(core[2]), int(core[3])),
-                            (0, 255, 0), 2,
-                        )
-                        chair_pts = get_points_in_bbox(
-                            camera_points, pixels, valid, core
-                        )
-                        if len(chair_pts) == 0:
-                            # Thin chair legs can miss the core box entirely.
-                            chair_pts = get_points_in_bbox(
-                                camera_points, pixels, valid, (x1, y1, x2, y2)
-                            )
-                        if len(chair_pts) > 0:
-                            cw = robot_to_world(
-                                optical_to_robot(np.median(chair_pts, axis=0)),
-                                robot_position, robot_rpy,
-                            )
-                            cx, cy = float(cw[0]), float(cw[1])
-                            dxg, dyg = cx - robot_position[0], cy - robot_position[1]
-                            dist = float(np.hypot(dxg, dyg))
-                            if dist >= 0.5:
-                                chair_dist = dist
-                                chair_xy = (cx, cy)
-                                if dist > GOAL_STOP_M:
-                                    s = (dist - GOAL_STOP_M) / dist
-                                    gx = robot_position[0] + dxg * s
-                                    gy = robot_position[1] + dyg * s
-                                else:
-                                    gx, gy = cx, cy
-                                if goal_smooth is None:
-                                    goal_smooth = np.array([gx, gy], dtype=np.float64)
-                                else:
-                                    goal_smooth = 0.85 * goal_smooth + 0.15 * np.array(
-                                        [gx, gy], dtype=np.float64
+                        # Chase only after a long stable track and a large box
+                        # (far chairs look small and lidar rarely hits them).
+                        if robot_mode == "GOAL" or (
+                            chair_stable >= CHASE_STABLE_FRAMES
+                            and w * h >= MIN_CHAIR_BBOX_AREA
+                        ):
+                            # Lock the first good estimate — keep re-measuring and
+                            # the map cross blinks as lidar association jumps.
+                            if chair_xy is None:
+                                camera_points = lidar_to_camera_optical(lidar_points)
+                                pixels, valid = project_camera_to_pixel(camera_points)
+                                chair_pts = get_points_in_bbox(
+                                    camera_points, pixels, valid, (x1, y1, x2, y2)
+                                )
+                                if len(chair_pts) > 0:
+                                    cw = robot_to_world(
+                                        optical_to_robot(target_point(chair_pts)),
+                                        robot_position, robot_rpy,
                                     )
-                                goal_x, goal_y = float(goal_smooth[0]), float(goal_smooth[1])
-                                ggx, ggy = world_to_grid(np.array([[goal_x, goal_y]]))
-                                if len(ggx) > 0:
-                                    new_goal = (int(ggy[0]), int(ggx[0]))
-                                    if robot_mode != "GOAL":
-                                        print("Goal: chasing chair")
-                                        robot_mode = "GOAL"
-                                        active_path = current_path = None
-                                        object_goal = new_goal
-                                        goal_replan_at = 0.0
-                                    elif (
-                                        object_goal is None
-                                        or abs(new_goal[0] - object_goal[0])
-                                        + abs(new_goal[1] - object_goal[1])
-                                        > GOAL_UPDATE_CELLS
-                                    ):
-                                        object_goal = new_goal
-                                        goal_replan_at = 0.0
-                                else:
-                                    print("Goal: chair outside map")
+                                    cx, cy = float(cw[0]), float(cw[1])
+                                    dxg, dyg = cx - robot_position[0], cy - robot_position[1]
+                                    dist = float(np.hypot(dxg, dyg))
+                                    if dist >= 0.5:
+                                        chair_dist = dist
+                                        chair_xy = (cx, cy)
+                                        if dist > GOAL_STOP_M:
+                                            s = (dist - GOAL_STOP_M) / dist
+                                            goal_x = robot_position[0] + dxg * s
+                                            goal_y = robot_position[1] + dyg * s
+                                        else:
+                                            goal_x, goal_y = cx, cy
+                                        goal_smooth = np.array(
+                                            [goal_x, goal_y], dtype=np.float64
+                                        )
+                                        ggx, ggy = world_to_grid(
+                                            np.array([[goal_x, goal_y]])
+                                        )
+                                        if len(ggx) > 0:
+                                            object_goal = (int(ggy[0]), int(ggx[0]))
+                                            print(
+                                                f"Goal: chasing {TARGET_CLASS} "
+                                                f"({dist:.1f} m away) — locked"
+                                            )
+                                            robot_mode = "GOAL"
+                                            active_path = current_path = None
+                                            goal_replan_at = 0.0
+                                            goal_best_dist = None
+                                            goal_stalls = 0
+                                        else:
+                                            print("Goal: chair outside map")
+                                            chair_xy = chair_dist = goal_smooth = None
+                                            goal_x = goal_y = None
 
                 latest_camera = annotated_frame
 
             if robot_mode == "GOAL" and started:
                 ad = approach_dist()
+                td = target_dist()
                 # goal_x/goal_y already sit GOAL_STOP_M short of the target, so
                 # arriving there means we are a body length away from the chair.
                 if (ad is not None and ad < GOAL_ARRIVE_M) or (
-                    chair_dist is not None and chair_dist < GOAL_STOP_M
+                    td is not None and td < GOAL_STOP_M
                 ):
-                    near = chair_dist if chair_dist is not None else ad
+                    near = td if td is not None else ad
                     finish_goal(f"Goal: reached {TARGET_CLASS} at {near:.2f} m — sitting")
                     continue
 
-                if obstacle_ahead(lidar_robot):
+                if obstacle_ahead(lidar_robot) or (
+                    active_path is not None
+                    and path_blocked(occupancy_grid, active_path, path_index)
+                ):
                     blocked_streak += 1
                 else:
                     blocked_streak = 0
@@ -902,7 +1019,7 @@ if __name__ == "__main__":
                     blocked_streak = 0
                     goal_replan_at = 0.0
                     vx = vy = vyaw = 0.0
-                    print("Goal: obstacle ahead — stopping / replanning")
+                    print("Goal: obstacle / blocked path — stopping / replanning")
                     continue
 
                 now = time.time()
@@ -911,6 +1028,8 @@ if __name__ == "__main__":
                     goal_replan_at = now
                     cell = robot_cell(robot_position)
                     if cell is not None and object_goal is not None:
+                        # Same clearance as exploration so chase paths fit doors
+                        # but stay off walls; snap to nearest free cell.
                         reachable_set, parent_map, _ = exploration.compute_reachability(
                             occupancy_grid, cell, resolution=RESOLUTION,
                             robot_radius_m=ROBOT_RADIUS,
@@ -927,7 +1046,10 @@ if __name__ == "__main__":
                             d_end = float(np.hypot(
                                 end[0] - robot_position[0], end[1] - robot_position[1]
                             ))
-                            if d_end >= 0.3:
+                            # Refuse paths that still graze occupied cells.
+                            if d_end >= 0.3 and not path_blocked(
+                                occupancy_grid, new_path, 0
+                            ):
                                 active_path = chair_path = new_path.copy()
                                 path_index = 0
                                 if not had_path:
@@ -945,17 +1067,47 @@ if __name__ == "__main__":
                     )
 
                     if arrived:
-                        finish_goal(f"Goal: at {TARGET_CLASS} stand-off — sitting")
+                        # The path ends at nearest_reachable(), which can fall
+                        # well short of the target while the ground around it is
+                        # still unknown. Only sit if we are genuinely there.
+                        if td is None or td <= GOAL_STOP_M + GOAL_ARRIVE_M:
+                            finish_goal(
+                                f"Goal: at {TARGET_CLASS} stand-off — sitting"
+                            )
+                            continue
+
+                        if goal_best_dist is None or td < goal_best_dist - GOAL_PROGRESS_M:
+                            goal_best_dist, goal_stalls = td, 0
+                        else:
+                            goal_stalls += 1
+
+                        stop(client)
+                        active_path = None
+                        vx = vy = vyaw = 0.0
+                        goal_replan_at = 0.0
+
+                        if goal_stalls >= GOAL_STALL_TRIES:
+                            finish_goal(
+                                f"Goal: cannot get closer than {td:.2f} m — sitting"
+                            )
+                        else:
+                            print(
+                                f"Goal: path ended {td:.2f} m short — "
+                                f"replanning as the map fills in"
+                            )
                         continue
 
                     now = time.time()
                     if now - last_exec_log >= EXEC_LOG_S:
                         last_exec_log = now
-                        left = chair_dist if chair_dist is not None else float("nan")
+                        end = cell_to_world(active_path[-1])
+                        gap = (
+                            float(np.hypot(end[0] - chair_xy[0], end[1] - chair_xy[1]))
+                            if chair_xy is not None else float("nan")
+                        )
                         print(
-                            f"CHASE   | {left:4.1f} m to {TARGET_CLASS} | "
-                            f"at ({robot_position[0]:.2f},{robot_position[1]:.2f}) "
-                            f"-> ({target[0]:.2f},{target[1]:.2f}) | "
+                            f"CHASE   | {td if td is not None else float('nan'):4.1f} m "
+                            f"to {TARGET_CLASS} | path ends {gap:4.1f} m from it | "
                             f"v {vx:.2f} w {vyaw:+.2f}"
                         )
 
@@ -973,11 +1125,14 @@ if __name__ == "__main__":
                     trajectory_points, display_path,
                     RESOLUTION, ORIGIN_X, ORIGIN_Y,
                     target_xy=chair_xy,
-                    frontier_cells=frontier_cells, goal_cluster=display_goal,
                     vx=vx, vy=vy, vyaw=vyaw,
                 )
 
-            show_dashboard(latest_camera, latest_map)
+            cam_v, map_v = show_dashboard(latest_camera, latest_map)
+            recorder.update(
+                cam_v if latest_camera is not None else None,
+                map_v if latest_map is not None else None,
+            )
 
     except KeyboardInterrupt:
         pass
@@ -1000,10 +1155,15 @@ if __name__ == "__main__":
                 trajectory_points, display_path,
                 RESOLUTION, ORIGIN_X, ORIGIN_Y,
                 target_xy=chair_xy,
-                frontier_cells=frontier_cells, goal_cluster=display_goal,
                 run=SAVE_DIR, save=True,
             )
         except Exception as e:
             print(f"map save failed: {e}")
+
+        try:
+            recorder.close()
+            print(f"Recording saved: {REC_DIR}")
+        except Exception as e:
+            print(f"recording close failed: {e}")
 
         cv2.destroyAllWindows()

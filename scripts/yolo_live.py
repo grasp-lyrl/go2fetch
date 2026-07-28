@@ -9,6 +9,7 @@ MODEL_PATH = "yolo26m.pt"
 CONF = 0.50
 IMGSZ = 640
 MAX_DET = 50
+SHOW_CLASSES = ("person", "tv", "backpack", "chair", "bench")
 
 
 def _yolo_device():
@@ -28,6 +29,9 @@ if DEVICE == "cuda":
 model = YOLO(MODEL_PATH)
 with contextlib.redirect_stdout(io.StringIO()):
     model.fuse()
+SHOW_CLASS_IDS = [
+    i for i, name in model.names.items() if name in SHOW_CLASSES
+]
 print(f"YOLO: {DEVICE} | {MODEL_PATH}")
 
 
@@ -39,6 +43,7 @@ def process_frame(frame):
         imgsz=IMGSZ,
         quantize=QUANT,
         max_det=MAX_DET,
+        classes=SHOW_CLASS_IDS,
         verbose=False,
     )
 
