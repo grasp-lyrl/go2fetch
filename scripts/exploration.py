@@ -217,35 +217,23 @@ def nearest_reachable(goal, reachable_set):
     gr, gc = goal
     return min(reachable_set, key=lambda c: (c[0] - gr) ** 2 + (c[1] - gc) ** 2)
 
-def plot_cv2(best_goal, goal_x, goal_y, path, trajectory_points, robot_position, vyaw, RESOLUTION, ORIGIN_X, ORIGIN_Y, frontier_cells, frontier_clusters, occ_canvas, path_index, start_position, end_position=None, run=None, save=False, chair_path=None, stop_radius_m=None, chair_xy=None):
-    rows, cols = occ_canvas.shape[:2]
+def plot_cv2(occ_canvas, robot_position, robot_yaw, trajectory_points, path,
+             RESOLUTION, ORIGIN_X, ORIGIN_Y, target_xy=None,
+             frontier_cells=None, goal_cluster=None,
+             vx=0.0, vy=0.0, vyaw=0.0, run=None, save=False):
+    rows = occ_canvas.shape[0]
     view = occ_canvas.copy()
 
-    FREE = (255, 255, 255)
-    UNKNOWN = (127, 127, 127)
-    OCCUPIED = (0, 0, 0)
-    FRONTIER = (207, 190, 23)
-    CLUSTER = (14, 127, 255)
-    GOAL_CLUSTER = (189, 103, 148)
-    PATH = (255, 144, 30)
-    TRAJECTORY = (180, 119, 31)
-    CHAIR_PATH = (194, 119, 227)
-    WAYPOINT = (0, 255, 255)
-    ROBOT = (255, 128, 0)
-    START = (44, 160, 44)
-    GOAL = (40, 39, 214)
-    CHAIR = (0, 255, 0)
-
-    if frontier_cells:
-        rr, cc = zip(*frontier_cells)
-        view[rows - 1 - np.fromiter(rr, np.int32, len(rr)), np.fromiter(cc, np.int32, len(cc))] = FRONTIER
-
-    if best_goal is not None and "cells" in best_goal:
-        rr, cc = zip(*best_goal["cells"])
-        view[rows - 1 - np.fromiter(rr, np.int32, len(rr)), np.fromiter(cc, np.int32, len(cc))] = GOAL_CLUSTER
-    elif best_goal is not None and "center" in best_goal:
-        r, c = best_goal["center"]
-        view[rows - 1 - r, c] = GOAL_CLUSTER
+    # BGR
+    PATH = (229, 70, 79)          # indigo
+    TRAJECTORY = (105, 150, 5)    # emerald
+    ROBOT = (72, 29, 225)         # rose
+    ROBOT_EDGE = (55, 19, 136)    # dark rose
+    TARGET = (6, 119, 217)        # amber
+    HEADING = (178, 145, 8)       # cyan
+    YAW = (211, 38, 192)          # fuchsia
+    FRONTIER = (53, 230, 163)     # lime
+    FRONTIER_GOAL = (18, 98, 63)  # dark lime
 
     def world_to_grid(x, y):
         return int((x - ORIGIN_X) / RESOLUTION), int((y - ORIGIN_Y) / RESOLUTION)
@@ -253,127 +241,71 @@ def plot_cv2(best_goal, goal_x, goal_y, path, trajectory_points, robot_position,
     def to_view(c, r):
         return int(c), int(rows - 1 - r)
 
-    if len(trajectory_points) > 1:
-        pts = [
-            to_view(*world_to_grid(p[0], p[1]))
-            for p in trajectory_points
-        ]
-        cv2.polylines(view, [np.asarray(pts, dtype=np.int32)], False, TRAJECTORY, 2, cv2.LINE_AA)
+    def paint_cells(cells, color, width):
+        mask = np.zeros(view.shape[:2], dtype=np.uint8)
+        rr = np.fromiter((r for r, _ in cells), np.int32, len(cells))
+        cc = np.fromiter((c for _, c in cells), np.int32, len(cells))
+        mask[rows - 1 - rr, cc] = 255
+        if width > 1:
+            mask = cv2.dilate(mask, np.ones((width, width), np.uint8))
+        view[mask > 0] = color
 
-    if frontier_clusters:
-        for cl in frontier_clusters:
-            cr, cc = cl["center"]
-            cv2.circle(view, to_view(cc, cr), 4, CLUSTER, -1, cv2.LINE_AA)
+    if frontier_cells:
+        paint_cells(frontier_cells, FRONTIER, 2)
 
-    if goal_x is not None and goal_y is not None:
-        gc, gr = world_to_grid(goal_x, goal_y)
-        x, y = to_view(gc, gr)
-        if stop_radius_m is not None and stop_radius_m > 0:
-            radius_px = max(1, int(round(stop_radius_m / RESOLUTION)))
-            cv2.circle(view, (x, y), radius_px, GOAL, 2, cv2.LINE_AA)
-        cv2.line(view, (x - 8, y - 8), (x + 8, y + 8), (0, 0, 0), 3, cv2.LINE_AA)
-        cv2.line(view, (x - 8, y + 8), (x + 8, y - 8), (0, 0, 0), 3, cv2.LINE_AA)
-        cv2.line(view, (x - 7, y - 7), (x + 7, y + 7), GOAL, 2, cv2.LINE_AA)
-        cv2.line(view, (x - 7, y + 7), (x + 7, y - 7), GOAL, 2, cv2.LINE_AA)
+    if goal_cluster is not None and goal_cluster.get("cells"):
+        paint_cells(goal_cluster["cells"], FRONTIER_GOAL, 3)
 
     if path and len(path) > 1:
         pts = np.asarray([to_view(c, r) for r, c in path], dtype=np.int32)
         cv2.polylines(view, [pts], False, PATH, 2, cv2.LINE_AA)
 
-    if path is not None and len(path) > 0:
-        tr, tc = path[min(path_index, len(path) - 1)]
-        cv2.circle(view, to_view(tc, tr), 7, WAYPOINT, -1, cv2.LINE_AA)
+    if trajectory_points is not None and len(trajectory_points) > 1:
+        pts = np.asarray(
+            [to_view(*world_to_grid(p[0], p[1])) for p in trajectory_points],
+            dtype=np.int32,
+        )
+        cv2.polylines(view, [pts], False, TRAJECTORY, 2, cv2.LINE_AA)
 
-    if chair_path is not None and len(chair_path) > 1:
-        pts = np.asarray([to_view(c, r) for r, c in chair_path], dtype=np.int32)
-        cv2.polylines(view, [pts], False, CHAIR_PATH, 2, cv2.LINE_AA)
-
-    if chair_xy is not None:
-        cc, cr = world_to_grid(float(chair_xy[0]), float(chair_xy[1]))
-        cx, cy = to_view(cc, cr)
-        cv2.line(view, (cx - 10, cy - 10), (cx + 10, cy + 10), (0, 0, 0), 4, cv2.LINE_AA)
-        cv2.line(view, (cx - 10, cy + 10), (cx + 10, cy - 10), (0, 0, 0), 4, cv2.LINE_AA)
-        cv2.line(view, (cx - 9, cy - 9), (cx + 9, cy + 9), CHAIR, 2, cv2.LINE_AA)
-        cv2.line(view, (cx - 9, cy + 9), (cx + 9, cy - 9), CHAIR, 2, cv2.LINE_AA)
+    if target_xy is not None:
+        tc, tr = world_to_grid(float(target_xy[0]), float(target_xy[1]))
+        tx, ty = to_view(tc, tr)
+        cv2.line(view, (tx - 10, ty - 10), (tx + 10, ty + 10), TARGET, 3, cv2.LINE_AA)
+        cv2.line(view, (tx - 10, ty + 10), (tx + 10, ty - 10), TARGET, 3, cv2.LINE_AA)
 
     rc, rr = world_to_grid(robot_position[0], robot_position[1])
     rx, ry = to_view(rc, rr)
-    cv2.rectangle(view, (rx - 4, ry - 4), (rx + 4, ry + 4), ROBOT, -1)
+    cv2.circle(view, (rx, ry), 6, ROBOT, -1, cv2.LINE_AA)
+    cv2.circle(view, (rx, ry), 6, ROBOT_EDGE, 1, cv2.LINE_AA)
 
-    if start_position is not None:
-        sc, sr = world_to_grid(start_position[0], start_position[1])
-        cv2.circle(view, to_view(sc, sr), 3, START, -1, cv2.LINE_AA)
-
-    if end_position is not None:
-        ec, er = world_to_grid(end_position[0], end_position[1])
-        cv2.circle(view, to_view(ec, er), 8, GOAL, -1, cv2.LINE_AA)
-
-    dx = goal_x - robot_position[0] if goal_x is not None else 0.0
-    dy = goal_y - robot_position[1] if goal_y is not None else 0.0
-    distance = float(np.hypot(dx, dy))
-    if goal_x is not None and goal_y is not None and distance > 0.01:
-        arrow_len = 1.0 / RESOLUTION
-        end = to_view(
-            int(rc + (dx / distance) * arrow_len),
-            int(rr + (dy / distance) * arrow_len),
-        )
-        cv2.arrowedLine(view, (rx, ry), end, GOAL, 2, tipLength=0.25, line_type=cv2.LINE_AA)
+    speed = float(np.hypot(vx, vy))
+    if speed > 0.01:
+        cy_yaw, sy_yaw = np.cos(robot_yaw), np.sin(robot_yaw)
+        wdx = (cy_yaw * vx - sy_yaw * vy) / speed
+        wdy = (sy_yaw * vx + cy_yaw * vy) / speed
+        arrow_len = 1.5 / RESOLUTION
+        end = to_view(rc + wdx * arrow_len, rr + wdy * arrow_len)
+        cv2.arrowedLine(view, (rx, ry), end, HEADING, 2, tipLength=0.25,
+                        line_type=cv2.LINE_AA)
 
     if abs(vyaw) > 0.01:
-        radius = 14
-        arc_angle = min(abs(vyaw) * 180, 120)
-        end_angle = arc_angle if vyaw > 0 else -arc_angle
-        cv2.ellipse(view, (rx, ry), (radius, radius), 0, 0, end_angle, ROBOT, 2, cv2.LINE_AA)
-
-    cv2.rectangle(view, (0, 0), (cols - 1, rows - 1), (80, 80, 80), 2)
+        radius = 13
+        sweep = float(np.clip(abs(vyaw) * 90.0, 60.0, 200.0))
+        # cv2 angles grow clockwise on screen, world yaw grows counter-clockwise
+        sign = -1.0 if vyaw > 0 else 1.0
+        start_deg = -90.0 - sign * sweep * 0.5
+        cv2.ellipse(view, (rx, ry), (radius, radius), 0,
+                    start_deg, start_deg + sign * sweep, YAW, 2, cv2.LINE_AA)
+        a_end = np.radians(start_deg + sign * sweep)
+        a_prev = np.radians(start_deg + sign * (sweep - 12.0))
+        cv2.arrowedLine(
+            view,
+            (int(rx + radius * np.cos(a_prev)), int(ry + radius * np.sin(a_prev))),
+            (int(rx + radius * np.cos(a_end)), int(ry + radius * np.sin(a_end))),
+            YAW, 2, tipLength=2.0, line_type=cv2.LINE_AA,
+        )
 
     if save and run is not None:
         cv2.imwrite(f"{run}/map.png", view)
 
-    legend = [
-        ("patch", FREE, "Free"),
-        ("patch", UNKNOWN, "Unknown"),
-        ("patch", OCCUPIED, "Occupied"),
-        ("patch", FRONTIER, "Frontier"),
-        ("marker", CLUSTER, "Cluster"),
-        ("patch", GOAL_CLUSTER, "Goal cluster"),
-        ("line", PATH, "Path"),
-        ("line", TRAJECTORY, "Trajectory"),
-        ("line", CHAIR_PATH, "Chair path"),
-        ("marker", WAYPOINT, "Waypoint"),
-        ("marker", ROBOT, "Robot"),
-        ("marker", START, "Start"),
-        ("marker", GOAL, "Goal"),
-        ("marker", CHAIR, "Target"),
-        ("line", GOAL, "Reach radius"),
-    ]
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    font_scale = 0.55
-    thickness = 1
-    row_h = 22
-    handle_w = 30
-    pad_x, pad_y = 12, 10
-    gap = 10
-    text_w = max(cv2.getTextSize(label, font, font_scale, thickness)[0][0] for _, _, label in legend)
-    box_w = pad_x * 2 + handle_w + gap + text_w
-    box_h = pad_y * 2 + row_h * len(legend)
-    x0 = view.shape[1] - box_w - 16
-    y0 = 16
-    overlay = view.copy()
-    cv2.rectangle(overlay, (x0, y0), (x0 + box_w, y0 + box_h), (255, 255, 255), -1)
-    cv2.addWeighted(overlay, 0.8, view, 0.2, 0, view)
-    cv2.rectangle(view, (x0, y0), (x0 + box_w, y0 + box_h), (0, 0, 0), 1)
-    for i, (kind, bgr, label) in enumerate(legend):
-        cy = y0 + pad_y + i * row_h + row_h // 2
-        hx0 = x0 + pad_x
-        hx1 = hx0 + handle_w
-        if kind == "patch":
-            cv2.rectangle(view, (hx0, cy - 6), (hx1, cy + 6), bgr, -1)
-            cv2.rectangle(view, (hx0, cy - 6), (hx1, cy + 6), (0, 0, 0), 1)
-        elif kind == "line":
-            cv2.line(view, (hx0, cy), (hx1, cy), bgr, 2, cv2.LINE_AA)
-        else:
-            cv2.circle(view, ((hx0 + hx1) // 2, cy), 5, bgr, -1, cv2.LINE_AA)
-            cv2.circle(view, ((hx0 + hx1) // 2, cy), 5, (0, 0, 0), 1, cv2.LINE_AA)
-        cv2.putText(view, label, (hx1 + gap, cy + 5), font, font_scale, (0, 0, 0), thickness, cv2.LINE_AA)
     return view
