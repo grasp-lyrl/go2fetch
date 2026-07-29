@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="LiDAR–Camera Sensor Fusion for Real-Time Mapping, Object Detection, and Autonomous Navigation on a Unitree Go2." />
+  <title>Go2Fetch | Unitree Go2 Autonomous Navigation</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="hero">
+    <div class="container">
+      <p class="eyebrow">Go2Fetch</p>
+      <h1>LiDAR–Camera Sensor Fusion for Real-Time Mapping, Object Detection, and Autonomous Navigation on a Unitree Go2</h1>
+      <p class="authors">Siri Kelshikar</p>
+      <div class="links">
+        <a class="button primary" href="#" aria-disabled="true">Paper coming soon</a>
+        <a class="button" href="https://github.com/siri2009k/go2fetch">Code</a>
+        <a class="button" href="#demo">Demo coming soon</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section class="container section">
+      <h2>Overview</h2>
+      <p>
+        This project presents an autonomous indoor navigation system for a Unitree Go2 quadruped robot equipped with LiDAR and a camera. The robot combines its built-in odometry with LiDAR measurements to construct a two-dimensional occupancy grid in real time.
+      </p>
+      <p>
+        A graph-based path-planning algorithm is then applied to the generated map to compute a collision-free route toward a target location. The planned path is converted into a sequence of motion and yaw commands that guide the robot through the environment.
+      </p>
+      <p>
+        Objects of interest are detected using YOLO. When a target object, such as a chair, is identified, LiDAR points are projected into the camera frame to estimate the object’s distance and position relative to the robot. The robot then updates its navigation goal and autonomously approaches the detected object.
+      </p>
+      <p>
+        The system demonstrates real-time mapping, object detection, sensor fusion, path planning, and autonomous object fetching in indoor environments.
+      </p>
+    </section>
+
+    <section class="container section">
+      <h2>System Pipeline</h2>
+      <div class="grid">
+        <article class="card"><span>01</span><h3>Real-Time Mapping</h3><p>Fuse LiDAR measurements with built-in odometry to create a 2D occupancy grid.</p></article>
+        <article class="card"><span>02</span><h3>Object Detection</h3><p>Use YOLO and the onboard camera to detect a target object such as a chair.</p></article>
+        <article class="card"><span>03</span><h3>Sensor Fusion</h3><p>Project LiDAR points into the camera frame to estimate target distance and position.</p></article>
+        <article class="card"><span>04</span><h3>Path Planning</h3><p>Compute a collision-free route through the generated occupancy grid.</p></article>
+        <article class="card"><span>05</span><h3>Robot Control</h3><p>Convert the planned path into queued motion and yaw commands.</p></article>
+        <article class="card"><span>06</span><h3>Object Fetching</h3><p>Navigate toward and autonomously approach the detected object.</p></article>
+      </div>
+    </section>
+
+    <section id="demo" class="container section">
+      <h2>Demo</h2>
+      <div class="placeholder">
+        <strong>Demo video coming soon</strong>
+        <p>Add a YouTube embed or local video here.</p>
+      </div>
+    </section>
+
+    <section class="container section">
+      <h2>Results</h2>
+      <div class="results">
+        <div class="placeholder small">Robot platform image</div>
+        <div class="placeholder small">Occupancy-grid result</div>
+        <div class="placeholder small">YOLO detection result</div>
+        <div class="placeholder small">Planned-path visualization</div>
+      </div>
+    </section>
+
+    <section class="container section contact">
+      <h2>Contact</h2>
+      <p>Siri Kelshikar · <a href="mailto:siri.kelshikar@gmail.com">siri.kelshikar@gmail.com</a></p>
+    </section>
+  </main>
+
+  <footer>
+    <div class="container">Go2Fetch · Hosted with GitHub Pages</div>
+  </footer>
+</body>
+</html>
