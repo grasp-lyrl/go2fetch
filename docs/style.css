@@ -62,7 +62,7 @@ h1 .accent{ color:var(--accent); }
 .byline{ color:var(--muted); margin:0 0 26px; font-family:"Space Mono"; font-size:.95rem; letter-spacing:.02em; }
 .links{ display:flex; flex-wrap:wrap; gap:12px; }
 .button{
-  display:inline-flex; align-items:center; gap:8px; padding:13px 22px; border-radius:999px;
+  display:inline-flex; align-items:center; gap:8px; padding:8px 22px; border-radius:999px;
   border:2px solid var(--ink); color:var(--ink); text-decoration:none;
   font-weight:600; font-family:"Space Grotesk"; transition:transform .12s ease, background .2s, color .2s;
 }
