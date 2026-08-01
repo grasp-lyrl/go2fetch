@@ -7,3 +7,9 @@ data/*
 *.pt
 *.mp4
 recordings/
+!docs/videos/run1-map.mp4
+!docs/videos/run1-camera.mp4
+!docs/videos/run1-phone.mp4
+!docs/videos/run2-map.mp4
+!docs/videos/run2-camera.mp4
+!docs/videos/run2-phone.mp4

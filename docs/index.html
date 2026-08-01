@@ -5,77 +5,297 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="description" content="LiDAR–Camera Sensor Fusion for Real-Time Mapping, Object Detection, and Autonomous Navigation on a Unitree Go2." />
   <title>Go2Fetch | Unitree Go2 Autonomous Navigation</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <header class="hero">
-    <div class="container">
-      <p class="eyebrow">Go2Fetch</p>
-      <h1>LiDAR–Camera Sensor Fusion for Real-Time Mapping, Object Detection, and Autonomous Navigation on a Unitree Go2</h1>
-      <p class="authors">Siri Kelshikar</p>
+
+  <nav class="nav" id="nav" aria-label="Primary">
+    <div class="container nav-inner">
+      <a href="#top" class="nav-brand">Go2Fetch</a>
+      <div class="nav-links">
+        <a href="#overview">Overview</a>
+        <a href="#pipeline">Pipeline</a>
+        <a href="#demos" class="nav-cta">▶ Demos</a>
+      </div>
+    </div>
+  </nav>
+
+  <a class="go2-corner" href="#top" aria-label="Back to top">
+    <img src="go2.png" alt="Unitree Go2 quadruped robot" />
+  </a>
+
+  <header class="hero" id="top">
+    <div class="container hero-inner">
+      <p class="eyebrow"><span class="dot"></span> Unitree Go2 · LiDAR · YOLO</p>
+      <h1>Go2<span class="accent">Fetch</span></h1>
+      <p class="lede">LiDAR–Camera Sensor Fusion for Real-Time Mapping, Object Detection, and Autonomous Navigation on a Unitree Go2</p>
+      <p class="byline">Siri Kelshikar</p>
       <div class="links">
-        <a class="button primary" href="#" aria-disabled="true">Paper coming soon</a>
-        <a class="button" href="https://github.com/siri2009k/go2fetch">Code</a>
-        <a class="button" href="#demo">Demo coming soon</a>
+        <a class="button cta" href="#demos"><span class="play">▶</span> Watch the demos</a>
+        <a class="button" href="https://github.com/grasp-lyrl/go2fetch" target="_blank" rel="noopener">Code</a>
+        <a class="button ghost" href="#" aria-disabled="true">Paper — coming soon</a>
       </div>
     </div>
   </header>
 
+  <div class="marquee" aria-hidden="true">
+    <div class="marquee-track" id="marqueeTrack">
+      <div class="marquee-group">
+        <span>Real-Time Mapping</span><span class="sep" style="color:#e11d48">✦</span>
+        <span>Object Detection</span><span class="sep" style="color:#fb5a2d">✦</span>
+        <span>Sensor Fusion</span><span class="sep" style="color:#f97316">✦</span>
+        <span>High-Level Command</span><span class="sep" style="color:#eab308">✦</span>
+        <span>Path Planning</span><span class="sep" style="color:#86c520">✦</span>
+        <span>Autonomous Fetching</span><span class="sep" style="color:#2fb56a">✦</span>
+      </div>
+    </div>
+  </div>
+
   <main>
-    <section class="container section">
-      <h2>Overview</h2>
-      <p>
-        This project presents an autonomous indoor navigation system for a Unitree Go2 quadruped robot equipped with LiDAR and a camera. The robot combines its built-in odometry with LiDAR measurements to construct a two-dimensional occupancy grid in real time.
-      </p>
-      <p>
-        A graph-based path-planning algorithm is then applied to the generated map to compute a collision-free route toward a target location. The planned path is converted into a sequence of motion and yaw commands that guide the robot through the environment.
-      </p>
-      <p>
-        Objects of interest are detected using YOLO. When a target object, such as a chair, is identified, LiDAR points are projected into the camera frame to estimate the object’s distance and position relative to the robot. The robot then updates its navigation goal and autonomously approaches the detected object.
-      </p>
-      <p>
-        The system demonstrates real-time mapping, object detection, sensor fusion, path planning, and autonomous object fetching in indoor environments.
-      </p>
-    </section>
-
-    <section class="container section">
-      <h2>System Pipeline</h2>
-      <div class="grid">
-        <article class="card"><span>01</span><h3>Real-Time Mapping</h3><p>Fuse LiDAR measurements with built-in odometry to create a 2D occupancy grid.</p></article>
-        <article class="card"><span>02</span><h3>Object Detection</h3><p>Use YOLO and the onboard camera to detect a target object such as a chair.</p></article>
-        <article class="card"><span>03</span><h3>Sensor Fusion</h3><p>Project LiDAR points into the camera frame to estimate target distance and position.</p></article>
-        <article class="card"><span>04</span><h3>Path Planning</h3><p>Compute a collision-free route through the generated occupancy grid.</p></article>
-        <article class="card"><span>05</span><h3>Robot Control</h3><p>Convert the planned path into queued motion and yaw commands.</p></article>
-        <article class="card"><span>06</span><h3>Object Fetching</h3><p>Navigate toward and autonomously approach the detected object.</p></article>
+    <section class="section" id="overview">
+      <div class="container">
+        <p class="kicker">01 / Overview</p>
+        <h2>Overview</h2>
+        <div class="prose">
+          <p>This project presents an autonomous indoor navigation system for a Unitree Go2 quadruped robot equipped with LiDAR and an onboard camera. The robot fuses LiDAR measurements with onboard odometry to construct a real-time two-dimensional occupancy grid of its environment.</p>
+          <p>A graph-based path planner then computes a collision-free route through the generated map using Dijkstra search and cost maps. The resulting path is converted into high-level motion and yaw commands that guide the robot through the environment while continuously updating its navigation state.</p>
+          <p>Target objects are detected using a YOLO26 vision model. LiDAR points are projected into the calibrated camera frame to estimate each detected object's position relative to the robot, allowing the system to dynamically update its navigation goal and autonomously approach the target.</p>
+          <p>Together, these components integrate real-time mapping, perception, sensor fusion, path planning, and high-level control into a complete autonomous fetch pipeline for indoor environments.</p>
+        </div>
       </div>
     </section>
 
-    <section id="demo" class="container section">
-      <h2>Demo</h2>
-      <div class="placeholder">
-        <strong>Demo video coming soon</strong>
-        <p>Add a YouTube embed or local video here.</p>
+    <section class="pipeline" id="pipeline">
+      <div class="pin-wrap" id="pinWrap">
+        <div class="pin">
+          <div class="htrack" id="htrack">
+
+            <div class="hpanel intro">
+              <p class="kicker">02 / Pipeline</p>
+              <h2>System<br>Pipeline</h2>
+              <p class="intro-lede">Six stages, running in a continuous loop.</p>
+              <p class="intro-hint">Keep scrolling <span>→</span></p>
+            </div>
+
+            <div class="hpanel stage" style="--c:#e11d48">
+              <span class="ghost-no">01</span><span class="pno">01</span>
+              <h3>Real-Time Mapping</h3>
+              <p>Fuse LiDAR measurements with onboard odometry to construct a real-time two-dimensional occupancy grid.</p>
+              <span class="chip">5 cm occupancy grid · free / occupied / unknown</span>
+            </div>
+
+            <div class="hpanel stage" style="--c:#fb5a2d">
+              <span class="ghost-no">02</span><span class="pno">02</span>
+              <h3>Object Detection</h3>
+              <p>Detect target objects in the live camera stream using a YOLO26 vision model.</p>
+              <span class="chip">YOLO26 · real-time inference</span>
+            </div>
+
+            <div class="hpanel stage" style="--c:#f97316">
+              <span class="ghost-no">03</span><span class="pno">03</span>
+              <h3>Sensor Fusion</h3>
+              <p>Project LiDAR points into the calibrated camera frame to estimate the target's distance and position relative to the robot.</p>
+              <span class="chip">camera projection · calibrated extrinsics</span>
+            </div>
+
+            <div class="hpanel stage" style="--c:#eab308">
+              <span class="ghost-no">04</span><span class="pno">04</span>
+              <h3>Path Planning</h3>
+              <p>Compute a collision-free path through the occupancy grid using Dijkstra search and cost maps.</p>
+              <span class="chip">Dijkstra search · cost maps</span>
+            </div>
+
+            <div class="hpanel stage" style="--c:#86c520">
+              <span class="ghost-no">05</span><span class="pno">05</span>
+              <h3>High-Level Control</h3>
+              <p>Convert the planned path into high-level motion and yaw commands for autonomous navigation.</p>
+              <span class="chip">motion commands · yaw commands</span>
+            </div>
+
+            <div class="hpanel stage" style="--c:#2fb56a">
+              <span class="ghost-no">06</span><span class="pno">06</span>
+              <h3>Autonomous Fetch</h3>
+              <p>Continuously update the navigation goal and autonomously approach the detected target object.</p>
+              <span class="chip">object approach · dynamic goal updates</span>
+            </div>
+
+            <div class="hpanel spacer" aria-hidden="true"></div>
+          </div>
+          <div class="hprogress"><span id="hbar"></span></div>
+        </div>
       </div>
     </section>
 
-    <section class="container section">
-      <h2>Results</h2>
-      <div class="results">
-        <div class="placeholder small">Robot platform image</div>
-        <div class="placeholder small">Occupancy-grid result</div>
-        <div class="placeholder small">YOLO detection result</div>
-        <div class="placeholder small">Planned-path visualization</div>
+    <section class="section demos" id="demos">
+      <div class="container">
+        <p class="kicker">03 / Demos</p>
+        <h2>4th and 5th Floor Demos</h2>
+        <p class="section-lede">Each run is shown three ways: the map the Go2 builds, its live camera view, and a side view from a phone. The videos are in 2x speed.</p>
+
+        <div class="demo-group" style="--c:#e11d48">
+          <div class="demo-head">
+            <span class="run-no">01</span>
+            <div><h3>4th Floor Levine</h3><p class="demo-sub">Target: Chair</p></div>
+          </div>
+          <div class="demo-grid">
+            <figure class="vid vid-fit" onclick="openLightbox('videos/run1-map.mp4')">
+              <video src="videos/run1-map.mp4" poster="videos/run1-map-poster.jpg" autoplay loop muted playsinline></video>
+              <figcaption>Occupancy grid + planned path</figcaption>
+            </figure>
+            <figure class="vid vid-fit" onclick="openLightbox('videos/run1-camera.mp4')">
+              <video src="videos/run1-camera.mp4" poster="videos/run1-camera-poster.jpg" autoplay loop muted playsinline></video>
+              <figcaption>YOLO detections, robot POV</figcaption>
+            </figure>
+            <figure class="vid vid-crop" onclick="openLightbox('videos/run1-phone.mp4')">
+              <video src="videos/run1-phone.mp4" poster="videos/run1-phone-poster.jpg" autoplay loop muted playsinline></video>
+              <figcaption>The Go2 in the hallway</figcaption>
+            </figure>
+          </div>
+        </div>
+
+        <div class="demo-group" style="--c:#e11d48">
+          <div class="demo-head">
+            <span class="run-no">02</span>
+            <div><h3>5th Floor Levine</h3><p class="demo-sub">Target: Bench</p></div>
+          </div>
+          <div class="demo-grid">
+            <figure class="vid vid-fit" onclick="openLightbox('videos/run2-map.mp4')">
+              <video src="videos/run2-map.mp4" poster="videos/run2-map-poster.jpg" autoplay loop muted playsinline></video>
+              <figcaption>Occupancy grid + planned path</figcaption>
+            </figure>
+            <figure class="vid vid-fit" onclick="openLightbox('videos/run2-camera.mp4')">
+              <video src="videos/run2-camera.mp4" poster="videos/run2-camera-poster.jpg" autoplay loop muted playsinline></video>
+              <figcaption>YOLO detections, robot POV</figcaption>
+            </figure>
+            <figure class="vid vid-crop" onclick="openLightbox('videos/run2-phone.mp4')">
+              <video src="videos/run2-phone.mp4" poster="videos/run2-phone-poster.jpg" autoplay loop muted playsinline></video>
+              <figcaption>The Go2 in the hallway</figcaption>
+            </figure>
+          </div>
+        </div>
       </div>
     </section>
 
-    <section class="container section contact">
-      <h2>Contact</h2>
-      <p>Siri Kelshikar · <a href="mailto:siri.kelshikar@gmail.com">siri.kelshikar@gmail.com</a></p>
+    <section class="section contact" id="contact">
+      <div class="container">
+        <p class="kicker">04 / Contact</p>
+        <h2>Contact</h2>
+        <p class="prose">Siri Kelshikar &nbsp;·&nbsp; <a href="mailto:siri.kelshikar@gmail.com">siri.kelshikar@gmail.com</a></p>
+      </div>
     </section>
   </main>
 
   <footer>
-    <div class="container">Go2Fetch · Hosted with GitHub Pages</div>
+    <div class="container footer-inner">
+      <span>Go2Fetch</span>
+      <span>Hosted on GitHub Pages</span>
+    </div>
   </footer>
+
+  <div class="lightbox" id="lightbox" aria-hidden="true" onclick="closeLightbox(event)">
+    <button class="lightbox-close" onclick="closeLightbox(event)" aria-label="Close">✕</button>
+    <video id="lightboxVideo" controls loop playsinline></video>
+  </div>
+
+  <script>
+    const RAMP=[[0,[47,181,106]],[0.40,[234,179,8]],[0.72,[249,115,22]],[1,[225,29,72]]];
+    function warmColor(t){
+      t=Math.max(0,Math.min(1,t));
+      for(let i=0;i<RAMP.length-1;i++){
+        const [a,ca]=RAMP[i],[b,cb]=RAMP[i+1];
+        if(t<=b){const f=(t-a)/(b-a);const c=ca.map((v,k)=>Math.round(v+(cb[k]-v)*f));return `rgb(${c[0]},${c[1]},${c[2]})`;}
+      }
+      return 'rgb(225,29,72)';
+    }
+
+    const hero=document.querySelector('.hero');
+    const nav=document.getElementById('nav');
+    const pinWrap=document.getElementById('pinWrap');
+    const htrack=document.getElementById('htrack');
+    const hbar=document.getElementById('hbar');
+    const reduce=window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    function hDisabled(){ return window.innerWidth < 820 || reduce; }
+    function layoutPin(){
+      if(hDisabled()){ pinWrap.style.height=''; htrack.style.transform='none'; if(hbar) hbar.style.transform='scaleX(0)'; return; }
+      const maxX=Math.max(0, htrack.scrollWidth - window.innerWidth);
+      pinWrap.style.height=(window.innerHeight + maxX)+'px';
+    }
+    const clamp=(v)=>Math.max(0,Math.min(1,v));
+    let ticking=false;
+    function onScrollMain(){
+      const h=hero?hero.offsetHeight:600;
+      if(nav) nav.classList.toggle('show', window.scrollY>h*0.6);
+      if(!hDisabled()){
+        const rectTop=pinWrap.getBoundingClientRect().top + window.scrollY;
+        const total=pinWrap.offsetHeight - window.innerHeight;
+        const hp=clamp((window.scrollY - rectTop)/(total||1));
+        const maxX=Math.max(0, htrack.scrollWidth - window.innerWidth);
+        htrack.style.transform=`translateX(${-hp*maxX}px)`;
+        if(hbar) hbar.style.transform=`scaleX(${hp})`;
+      }
+      ticking=false;
+    }
+    window.addEventListener('scroll',()=>{ if(!ticking){requestAnimationFrame(onScrollMain);ticking=true;} },{passive:true});
+    window.addEventListener('resize',()=>{ layoutPin(); onScrollMain(); });
+    window.addEventListener('load',()=>{ layoutPin(); onScrollMain(); });
+    layoutPin(); onScrollMain();
+
+    const io=new IntersectionObserver((es)=>{
+      es.forEach(e=>{ if(e.isIntersecting){ e.target.classList.add('in'); io.unobserve(e.target);} });
+    },{threshold:0.18});
+    document.querySelectorAll('.demo-group').forEach(el=>io.observe(el));
+
+    (function(){
+      const track=document.getElementById('marqueeTrack');
+      if(!track) return;
+      const original=track.querySelector('.marquee-group');
+      function fill(){
+        while(track.scrollWidth < window.innerWidth*2 + original.offsetWidth){
+          track.appendChild(original.cloneNode(true));
+        }
+      }
+      fill();
+      const groupWidth=original.offsetWidth;
+      if(reduce) return;
+      let offset=0, last=performance.now();
+      const speed=60;
+      function tick(now){
+        const dt=(now-last)/1000; last=now;
+        offset+=speed*dt;
+        if(offset>=groupWidth) offset-=groupWidth;
+        track.style.transform=`translateX(${-offset}px)`;
+        requestAnimationFrame(tick);
+      }
+      requestAnimationFrame(tick);
+    })();
+
+    window.openLightbox=function(src){
+      var lb=document.getElementById('lightbox');
+      var v=document.getElementById('lightboxVideo');
+      if(!lb||!v) return;
+      v.src=src; v.muted=false; v.currentTime=0;
+      lb.classList.add('open'); lb.setAttribute('aria-hidden','false');
+      v.play().catch(function(){});
+      document.body.style.overflow='hidden';
+    };
+    window.closeLightbox=function(e){
+      var lb=document.getElementById('lightbox');
+      var v=document.getElementById('lightboxVideo');
+      if(!lb||!v) return;
+      if(e && e.target===v) return;
+      lb.classList.remove('open'); lb.setAttribute('aria-hidden','true');
+      v.pause(); v.removeAttribute('src'); v.load();
+      document.body.style.overflow='';
+    };
+    document.addEventListener('keydown', function(e){
+      if(e.key==='Escape'){
+        var lb=document.getElementById('lightbox');
+        if(lb && lb.classList.contains('open')) window.closeLightbox();
+      }
+    });
+  </script>
 </body>
 </html>
