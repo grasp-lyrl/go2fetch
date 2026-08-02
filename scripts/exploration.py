@@ -2,8 +2,6 @@ import numpy as np
 import heapq
 import cv2
 
-
-#outputs list of coordinates [(x,y),(x,y)...] each (x,y) being a frontier cell
 def detect_frontiers_cv2(grid_array, robot_grid_cell, resolution=0.05, radius_m=10.0):
     rows, cols = grid_array.shape
     r_robot, c_robot = robot_grid_cell
@@ -47,11 +45,7 @@ def compute_reachability(grid_array, start, resolution=0.05, radius_m=10.0, robo
     c_max = min(cols, c_start + radius_pixels + 1)
 
     k = max(1, int(round(robot_radius_m / resolution)))
-    blocked_mask = cv2.dilate(
-        (grid_array >= 8).astype(np.uint8),
-        np.ones((2 * k + 1, 2 * k + 1), np.uint8),
-    ).astype(bool)
-    # Always leave a small disk around the robot so planning can start.
+    blocked_mask = cv2.dilate((grid_array >= 8).astype(np.uint8), np.ones((2 * k + 1, 2 * k + 1), np.uint8),).astype(bool)
     clear_r = max(2, int(round(0.40 / resolution)))
     r0 = max(0, r_start - clear_r)
     r1 = min(rows, r_start + clear_r + 1)
@@ -129,7 +123,6 @@ def compute_reachability(grid_array, start, resolution=0.05, radius_m=10.0, robo
 
     return reachable_set, parent_map, cost_map
 
-#outputs list of dictionaries containing attributes of frontier clusters
 def cluster_frontiers_cv2(grid_array, frontier_cells, reachable_set, cost_map, resolution=0.05, radius_m=10.0, min_cluster_size=5):
 
     if not frontier_cells:
@@ -145,28 +138,18 @@ def cluster_frontiers_cv2(grid_array, frontier_cells, reachable_set, cost_map, r
     for r, c in frontier_cells:
         frontier_mask[r - r_min, c - c_min] = 255
 
-    contours, _ = cv2.findContours(
-        frontier_mask,
-        cv2.RETR_LIST,
-        cv2.CHAIN_APPROX_NONE
-    )
+    contours, _ = cv2.findContours(frontier_mask, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
 
     valid_clusters = []
 
     for contour in contours:
 
-        cluster_cells = [
-            (int(pt[0][1]) + r_min, int(pt[0][0]) + c_min)
-            for pt in contour
-        ]
+        cluster_cells = [(int(pt[0][1]) + r_min, int(pt[0][0]) + c_min) for pt in contour]
 
         if len(cluster_cells) < min_cluster_size:
             continue
 
-        reachable_cells = [
-            cell for cell in cluster_cells
-            if cell in reachable_set
-        ]
+        reachable_cells = [cell for cell in cluster_cells if cell in reachable_set]
 
         if not reachable_cells:
             continue
@@ -180,10 +163,7 @@ def cluster_frontiers_cv2(grid_array, frontier_cells, reachable_set, cost_map, r
             avg_row = int(np.mean([cell[0] for cell in cluster_cells]))
             avg_col = int(np.mean([cell[1] for cell in cluster_cells]))
 
-        center_cell = min(
-            reachable_cells,
-            key=lambda c: (c[0] - avg_row)**2 + (c[1] - avg_col)**2
-        )
+        center_cell = min(reachable_cells, key=lambda c: (c[0] - avg_row)**2 + (c[1] - avg_col)**2)
 
         valid_clusters.append({
             'cells': cluster_cells,
@@ -194,7 +174,6 @@ def cluster_frontiers_cv2(grid_array, frontier_cells, reachable_set, cost_map, r
 
     return valid_clusters
 
-#outputs list of coordinates [(start_x, start_y)...(end_x, end_y)] of BFS path to goal cluster
 def plan_path(goal, parent_map, reachable_set):
 
     if goal not in reachable_set:
@@ -224,16 +203,15 @@ def plot_cv2(occ_canvas, robot_position, robot_yaw, trajectory_points, path,
     rows = occ_canvas.shape[0]
     view = occ_canvas.copy()
 
-    # BGR
-    PATH = (229, 70, 79)          # indigo
-    TRAJECTORY = (105, 150, 5)    # emerald
-    ROBOT = (72, 29, 225)         # rose
-    ROBOT_EDGE = (55, 19, 136)    # dark rose
-    TARGET = (6, 119, 217)        # amber
-    HEADING = (178, 145, 8)       # cyan
-    YAW = (211, 38, 192)          # fuchsia
-    FRONTIER = (53, 230, 163)     # lime
-    FRONTIER_GOAL = (18, 98, 63)  # dark lime
+    PATH = (229, 70, 79)          
+    TRAJECTORY = (105, 150, 5)    
+    ROBOT = (72, 29, 225)         
+    ROBOT_EDGE = (55, 19, 136)    
+    TARGET = (6, 119, 217)        
+    HEADING = (178, 145, 8)       
+    YAW = (211, 38, 192)          
+    FRONTIER = (53, 230, 163)     
+    FRONTIER_GOAL = (18, 98, 63)  
 
     def world_to_grid(x, y):
         return int((x - ORIGIN_X) / RESOLUTION), int((y - ORIGIN_Y) / RESOLUTION)
@@ -261,10 +239,7 @@ def plot_cv2(occ_canvas, robot_position, robot_yaw, trajectory_points, path,
         cv2.polylines(view, [pts], False, PATH, 2, cv2.LINE_AA)
 
     if trajectory_points is not None and len(trajectory_points) > 1:
-        pts = np.asarray(
-            [to_view(*world_to_grid(p[0], p[1])) for p in trajectory_points],
-            dtype=np.int32,
-        )
+        pts = np.asarray([to_view(*world_to_grid(p[0], p[1])) for p in trajectory_points], dtype=np.int32,)
         cv2.polylines(view, [pts], False, TRAJECTORY, 2, cv2.LINE_AA)
 
     if target_xy is not None:
@@ -285,25 +260,17 @@ def plot_cv2(occ_canvas, robot_position, robot_yaw, trajectory_points, path,
         wdy = (sy_yaw * vx + cy_yaw * vy) / speed
         arrow_len = 1.5 / RESOLUTION
         end = to_view(rc + wdx * arrow_len, rr + wdy * arrow_len)
-        cv2.arrowedLine(view, (rx, ry), end, HEADING, 2, tipLength=0.25,
-                        line_type=cv2.LINE_AA)
+        cv2.arrowedLine(view, (rx, ry), end, HEADING, 2, tipLength=0.25,line_type=cv2.LINE_AA)
 
     if abs(vyaw) > 0.01:
         radius = 13
         sweep = float(np.clip(abs(vyaw) * 90.0, 60.0, 200.0))
-        # cv2 angles grow clockwise on screen, world yaw grows counter-clockwise
         sign = -1.0 if vyaw > 0 else 1.0
         start_deg = -90.0 - sign * sweep * 0.5
-        cv2.ellipse(view, (rx, ry), (radius, radius), 0,
-                    start_deg, start_deg + sign * sweep, YAW, 2, cv2.LINE_AA)
+        cv2.ellipse(view, (rx, ry), (radius, radius), 0, start_deg, start_deg + sign * sweep, YAW, 2, cv2.LINE_AA)
         a_end = np.radians(start_deg + sign * sweep)
         a_prev = np.radians(start_deg + sign * (sweep - 12.0))
-        cv2.arrowedLine(
-            view,
-            (int(rx + radius * np.cos(a_prev)), int(ry + radius * np.sin(a_prev))),
-            (int(rx + radius * np.cos(a_end)), int(ry + radius * np.sin(a_end))),
-            YAW, 2, tipLength=2.0, line_type=cv2.LINE_AA,
-        )
+        cv2.arrowedLine(view, (int(rx + radius * np.cos(a_prev)), int(ry + radius * np.sin(a_prev))), (int(rx + radius * np.cos(a_end)), int(ry + radius * np.sin(a_end))), YAW, 2, tipLength=2.0, line_type=cv2.LINE_AA,)
 
     if save and run is not None:
         cv2.imwrite(f"{run}/map.png", view)
